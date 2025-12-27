@@ -1,0 +1,12 @@
+/.venv
+basic/rag/debug_out/*
+**/*.pyc
+**/*.docx
+**/*.docx#
+wordle-6/*
+basic/rag/ingestion_records/*
+**/*.db
+basic/rag/ingested/*
+basic/rag/storage/*
+basic/rag/scripts/run/retrieval/results/*
+basic/rag/.env
