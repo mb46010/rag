@@ -94,8 +94,8 @@ In another terminal:
 
 ```bash
 # Start Chainlit app
-uv run chainlit run src/chat_rag/chainlit_app.py -w
 
+uv run chainlit run src/chat_rag/chainlit_app.py -w
 # App will run on http://localhost:8000
 ```
 

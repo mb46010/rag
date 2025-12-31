@@ -3,6 +3,8 @@ from typing import List, Optional
 from sentence_transformers import CrossEncoder
 from .models import PolicyChunk
 
+from langfuse import observe
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,6 +25,7 @@ class Reranker:
         # Use cpu device since we saw uv install torch cpu
         self.model = CrossEncoder(model_name, device="cpu")
 
+    @observe()
     def rerank(self, query: str, chunks: List[PolicyChunk], top_k: Optional[int] = None) -> List[PolicyChunk]:
         """
         Rerank a list of chunks based on the query.

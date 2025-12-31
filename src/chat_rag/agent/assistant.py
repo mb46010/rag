@@ -16,6 +16,7 @@ from langgraph.prebuilt import create_react_agent
 from langchain.tools import tool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langfuse.langchain import CallbackHandler
+from langfuse import observe
 
 from chat_rag.retriever import HybridRetriever
 from .prompt import SYSTEM_PROMPT
@@ -112,6 +113,7 @@ class HRAssistantAgent:
 
         return self.agent
 
+    @observe(as_type="agent")
     async def arun(self, message: str, chat_history: Optional[list] = None) -> Dict[str, Any]:
         """
         Run agent asynchronously.

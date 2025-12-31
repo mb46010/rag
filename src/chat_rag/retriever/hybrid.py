@@ -11,6 +11,8 @@ from .models import PolicyChunk
 from .reranker import Reranker
 
 
+from langfuse import observe
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,6 +58,7 @@ class HybridRetriever:
         # Initialize vector store
         self.vector_store = WeaviateVectorStore(weaviate_client=self.client, index_name=collection_name)
 
+    @observe(as_type="retriever")
     def retrieve(
         self,
         query: str,
