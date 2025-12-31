@@ -1,7 +1,8 @@
 # Usage:
 # python scripts/demo/verify_retriever.py "query" output.json
 # python scripts/demo/verify_retriever.py "query" output.json --filters '{"country": "CH"}'
-
+# python scripts/demo/verify_retriever.py "what are the eligibility criteria for work from home?" scripts/demo/output/retrieve_ch_wfh.json --filters '{"country": "CH"}'
+# python scripts/demo/verify_retriever.py "what are the eligibility criteria for work from home?" scripts/demo/output/retrieve_it_wfh.json --filters '{"country": "IT"}'
 import sys
 import os
 import argparse
@@ -13,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Add src to sys.path
-sys.path.append(os.path.join(os.path.dirname(__file__), "../../src"))
+# sys.path.append(os.path.join(os.path.dirname(__file__), "../../src"))
 
 from chat_rag.retriever.hybrid import HybridRetriever
 

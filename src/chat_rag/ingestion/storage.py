@@ -1,6 +1,6 @@
 import logging
 import weaviate
-from weaviate.classes.config import Configure, Property, DataType
+from weaviate.classes.config import Configure, Property, DataType, Tokenization
 from dataclasses import asdict
 from typing import List
 from .models import PolicyChunk
@@ -28,19 +28,23 @@ class WeaviateStorage:
             self.client.collections.delete(self.collection_name)
 
         # Create collection with schema
+        # NOTE: Weaviate does not have a dedicated "categorical" type (like ENUM).
+        # Instead, we use `Tokenization.FIELD` for text properties that act as categories (e.g., country codes, IDs).
+        # This treats the entire string as a single token, preventing stopword removal (fixing issues like country="IT" -> "it" -> removed)
+        # and ensuring exact matching for filters.
         logger.info("Creating new collection with schema")
         self.client.collections.create(
             name=self.collection_name,
             properties=[
-                Property(name="document_id", data_type=DataType.TEXT),
-                Property(name="document_name", data_type=DataType.TEXT),
-                Property(name="section_path_str", data_type=DataType.TEXT),
-                Property(name="chunk_id", data_type=DataType.TEXT),
+                Property(name="document_id", data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
+                Property(name="document_name", data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
+                Property(name="section_path_str", data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
+                Property(name="chunk_id", data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
                 Property(name="chunk_index", data_type=DataType.INT),
                 Property(name="text", data_type=DataType.TEXT),
                 Property(name="text_indexed", data_type=DataType.TEXT),
-                Property(name="topic", data_type=DataType.TEXT),
-                Property(name="country", data_type=DataType.TEXT),
+                Property(name="topic", data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
+                Property(name="country", data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
                 Property(name="active", data_type=DataType.BOOL),
                 Property(name="last_modified", data_type=DataType.TEXT),
             ],
