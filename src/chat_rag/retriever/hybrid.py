@@ -8,6 +8,8 @@ from llama_index.core.schema import NodeWithScore, TextNode
 from llama_index.embeddings.openai import OpenAIEmbedding
 
 from .models import PolicyChunk
+from .reranker import Reranker
+
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,7 @@ class HybridRetriever:
         collection_name: str = "PolicyChunk",
         embedding_model: str = "text-embedding-3-large",
         alpha: float = 0.5,
+        reranker_model: Optional[str] = None,
     ):
         """
         Initialize the hybrid retriever.
@@ -38,6 +41,7 @@ class HybridRetriever:
         self.weaviate_url = weaviate_url
         self.collection_name = collection_name
         self.alpha = alpha
+        self.reranker = Reranker(model_name=reranker_model) if reranker_model else None
 
         logger.info(f"Initializing HybridRetriever with collection: {collection_name}")
         logger.info(f"Weaviate URL: {weaviate_url}, alpha: {alpha}")
@@ -112,9 +116,20 @@ class HybridRetriever:
 
             # Convert to PolicyChunk objects
             chunks = []
-            for obj in response.objects[:top_k]:
+            # Fetch `candidate_pool_size` candidates initially if reranking is enabled,
+            # otherwise just fetch `top_k` (though we already limited to candidate_pool_size above).
+            # The query above uses limit=candidate_pool_size.
+            # So response.objects contains up to candidate_pool_size items.
+
+            for obj in response.objects:
                 chunk = self._convert_to_policy_chunk(obj, include_context)
                 chunks.append(chunk)
+
+            if self.reranker:
+                logger.info("Reranking candidates...")
+                chunks = self.reranker.rerank(query, chunks, top_k=top_k)
+            else:
+                chunks = chunks[:top_k]
 
             logger.info(f"Returning {len(chunks)} chunks")
             return chunks
