@@ -1,12 +1,76 @@
-/.venv
-basic/rag/debug_out/*
-**/*.pyc
-**/*.docx
-**/*.docx#
-wordle-6/*
-basic/rag/ingestion_records/*
-**/*.db
-basic/rag/ingested/*
-basic/rag/storage/*
-basic/rag/scripts/run/retrieval/results/*
-basic/rag/.env
+# Python
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*$py.class
+*.so
+*.pyc
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Environment variables
+.env
+.env.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Chainlit
+.chainlit/
+.files/
+
+# Weaviate data
+weaviate_data/
+
+# Ingestion contracts
+ingested/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SQLite
+*.db
+*.sqlite
+*.sqlite3
+specs/bugs.md
+specs/goal_v2.md
+.gitignore
+tests/verify_fix.py
+tests/repro_crash.py
+specs/goal.md
