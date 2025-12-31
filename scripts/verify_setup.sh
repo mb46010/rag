@@ -102,11 +102,11 @@ echo ""
 
 # Check src files
 echo "10. Checking source files..."
-[ -f "src/chainlit_app.py" ] && echo "   ✓ chainlit_app.py" || echo "   ✗ chainlit_app.py missing"
-[ -f "src/agent.py" ] && echo "   ✓ agent.py" || echo "   ✗ agent.py missing"
-[ -f "src/mcp_server.py" ] && echo "   ✓ mcp_server.py" || echo "   ✗ mcp_server.py missing"
-[ -f "src/ingestion.py" ] && echo "   ✓ ingestion.py" || echo "   ✗ ingestion.py missing"
-[ -f "src/retriever.py" ] && echo "   ✓ retriever.py" || echo "   ✗ retriever.py missing"
+[ -f "src/chat_rag/chainlit_app.py" ] && echo "   ✓ chainlit_app.py" || echo "   ✗ chainlit_app.py missing"
+[ -f "src/chat_rag/agent.py" ] && echo "   ✓ agent.py" || echo "   ✗ agent.py missing"
+[ -f "src/chat_rag/mcp_server.py" ] && echo "   ✓ mcp_server.py" || echo "   ✗ mcp_server.py missing"
+[ -f "src/chat_rag/ingestion.py" ] && echo "   ✓ ingestion.py" || echo "   ✗ ingestion.py missing"
+[ -f "src/chat_rag/retriever.py" ] && echo "   ✓ retriever.py" || echo "   ✗ retriever.py missing"
 echo ""
 
 echo "=================================="

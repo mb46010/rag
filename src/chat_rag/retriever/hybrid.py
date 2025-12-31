@@ -128,6 +128,8 @@ class HybridRetriever:
         if not filters:
             return None
 
+        logger.info(f"Building Weaviate filters from: {filters}")
+
         from weaviate.classes.query import Filter
 
         filter_conditions = []
