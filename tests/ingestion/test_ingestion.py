@@ -4,9 +4,29 @@ Tests for ingestion pipeline.
 
 import pytest
 import json
+import sys
+from unittest.mock import MagicMock
+
+# Mock weaviate if not installed
+sys.modules["weaviate"] = MagicMock()
+sys.modules["weaviate.classes"] = MagicMock()
+sys.modules["weaviate.classes.config"] = MagicMock()
+
+# Mock llama_index if not installed
+sys.modules["llama_index"] = MagicMock()
+sys.modules["llama_index.core"] = MagicMock()
+sys.modules["llama_index.core.node_parser"] = MagicMock()
+sys.modules["llama_index.core.ingestion"] = MagicMock()
+sys.modules["llama_index.core.extractors"] = MagicMock()
+sys.modules["llama_index.embeddings"] = MagicMock()
+sys.modules["llama_index.embeddings.openai"] = MagicMock()
+sys.modules["llama_index.llms"] = MagicMock()
+sys.modules["llama_index.llms.openai"] = MagicMock()
+
 from pathlib import Path
-from src.ingestion import IngestionPipeline, PolicyChunk
-from src.ingestion.text_processing import (
+from src.chat_rag.ingestion import IngestionPipeline, PolicyChunk
+from src.chat_rag.ingestion.config import IngestionConfig
+from src.chat_rag.ingestion.text_processing import (
     split_by_headers,
     generate_document_id,
     generate_chunk_id,
@@ -17,6 +37,16 @@ from src.ingestion.text_processing import (
 
 class TestIngestionPipeline:
     """Tests for IngestionPipeline."""
+
+    @pytest.fixture
+    def config(self, tmp_path):
+        """Create a test configuration."""
+        return IngestionConfig(
+            docs_dir=tmp_path / "docs",
+            output_dir=tmp_path / "output",
+            weaviate_url="http://localhost:8080",
+            collection_name="TestPolicyChunk",
+        )
 
     @pytest.fixture
     def sample_document(self):
@@ -47,16 +77,20 @@ This is the conclusion.""",
         }
 
     @pytest.fixture
-    def pipeline(self, tmp_path):
+    def pipeline(self, config):
         """Create a test pipeline instance with mocked storage."""
         from unittest.mock import MagicMock, patch
 
-        with patch("src.ingestion.pipeline.WeaviateStorage") as MockStorage:
+        with patch("src.chat_rag.ingestion.pipeline.WeaviateStorage") as MockStorage:
             # Configure mock
             mock_storage_instance = MagicMock()
             MockStorage.return_value = mock_storage_instance
 
-            pipeline = IngestionPipeline(docs_dir=str(tmp_path))
+            # Ensure config dirs exist
+            config.docs_dir.mkdir(parents=True, exist_ok=True)
+            config.output_dir.mkdir(parents=True, exist_ok=True)
+
+            pipeline = IngestionPipeline(config=config, policy_name="default")
             return pipeline
 
     def test_split_by_headers(self, sample_document):
@@ -148,10 +182,10 @@ This is the conclusion.""",
         assert "Header1 > Header2" in chunk.text_indexed
         assert "Test chunk text" in chunk.text_indexed
 
-    def test_load_document(self, pipeline, sample_document, tmp_path):
+    def test_load_document(self, pipeline, sample_document, config):
         """Test loading document from JSON file."""
         # Create temp JSON file
-        test_file = tmp_path / "test_policy.json"
+        test_file = config.docs_dir / "test_policy.json"
         with open(test_file, "w") as f:
             json.dump(sample_document, f)
 
@@ -162,8 +196,9 @@ This is the conclusion.""",
         assert loaded["metadata"]["document_name"] == "Test Policy"
 
     def test_create_chunks_from_document(self, pipeline, sample_document):
-        """Test creating chunks from a document."""
-        chunks = pipeline.create_chunks(sample_document)
+        """Test creating chunks using the pipeline's policy."""
+        # Use the policy directly to process document
+        chunks = pipeline.policy.process_document(sample_document)
 
         assert len(chunks) > 0
         assert all(isinstance(chunk, PolicyChunk) for chunk in chunks)
@@ -181,13 +216,34 @@ This is the conclusion.""",
 
     def test_chunks_have_section_paths(self, pipeline, sample_document):
         """Test that chunks have proper section paths."""
-        chunks = pipeline.create_chunks(sample_document)
+        chunks = pipeline.policy.process_document(sample_document)
 
         # All chunks should have section paths
         for chunk in chunks:
             assert len(chunk.section_path) > 0
             assert chunk.section_path_str != ""
             assert " > " in chunk.section_path_str or len(chunk.section_path) == 1
+
+    def test_save_ingestion_contract(self, pipeline, sample_document, config):
+        """Test saving ingestion contract."""
+        chunks = pipeline.policy.process_document(sample_document)
+        test_file = config.docs_dir / "test_policy.json"
+
+        # Save contract
+        pipeline.save_ingestion_contract(sample_document, chunks, test_file)
+
+        # Verify file exists
+        expected_output = config.output_dir / f"test_policy_chunks_{pipeline.policy.get_name()}.json"
+        assert expected_output.exists()
+
+        # Verify content
+        with open(expected_output, "r") as f:
+            contract = json.load(f)
+            assert "ingestion_metadata" in contract
+            assert contract["ingestion_metadata"]["pipeline_name"] == "default"
+            assert "document_metadata" in contract
+            assert "chunks" in contract
+            assert len(contract["chunks"]) == len(chunks)
 
 
 class TestPolicyChunkDataclass:

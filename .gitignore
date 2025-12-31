@@ -79,3 +79,4 @@ specs/goal.md
 agents.md
 scripts/demo/output/*
 output.json
+scripts/debug/*

@@ -5,7 +5,8 @@ import pytest
 import json
 import os
 import weaviate
-from src.ingestion import IngestionPipeline
+from src.chat_rag.ingestion import IngestionPipeline
+from src.chat_rag.ingestion.config import IngestionConfig
 
 # start weaviate with:
 # bash scripts/start_weaviate.sh
@@ -55,7 +56,10 @@ It should be chunked and stored in the local vector DB.""",
             pytest.skip(f"Local Weaviate not reachable: {e}")
 
         # Use a specific collection name for testing to avoid messing with real data
-        return IngestionPipeline(docs_dir=str(tmp_path), collection_name="PolicyChunkIntegrationTest")
+        config = IngestionConfig(
+            docs_dir=tmp_path, output_dir=tmp_path / "output", collection_name="PolicyChunkIntegrationTest"
+        )
+        return IngestionPipeline(config=config, policy_name="default")
 
     def test_ingestion_flow(self, pipeline, sample_document, tmp_path):
         """Test full ingestion flow against real Weaviate."""

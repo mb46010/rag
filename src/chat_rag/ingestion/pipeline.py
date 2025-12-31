@@ -1,17 +1,16 @@
 import logging
 import json
+import datetime
 from pathlib import Path
-from typing import List, Dict, Any
-from llama_index.core.node_parser import SentenceSplitter
+from typing import List, Dict, Any, Optional
+from dataclasses import asdict
 
 from .models import PolicyChunk
-from .text_processing import (
-    split_by_headers,
-    generate_document_id,
-    count_tokens,
-    create_policy_chunk,
-)
 from .storage import WeaviateStorage
+from .config import IngestionConfig
+from .policies.base import IngestionPolicy
+from .policies.default import DefaultIngestionPolicy
+from .policies.qa_extractor import QaExtractorPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -21,20 +20,29 @@ class IngestionPipeline:
 
     def __init__(
         self,
-        docs_dir: str = "./documents",
-        weaviate_url: str = "http://localhost:8080",
-        collection_name: str = "PolicyChunk",
-        embedding_model: str = "text-embedding-3-large",
-        max_chunk_tokens: int = 400,
+        config: IngestionConfig,
+        policy_name: str = "default",
     ):
-        self.docs_dir = Path(docs_dir)
-        self.max_chunk_tokens = max_chunk_tokens
+        self.config = config
+        self.policy_name = policy_name
 
-        logger.info("Initializing IngestionPipeline")
-        logger.info(f"Docs directory: {self.docs_dir}")
+        # Initialize Policy
+        if policy_name == "default":
+            self.policy: IngestionPolicy = DefaultIngestionPolicy(config)
+        elif policy_name == "qa_extractor":
+            self.policy = QaExtractorPolicy(config)
+        else:
+            raise ValueError(f"Unknown policy name: {policy_name}")
 
-        self.storage = WeaviateStorage(weaviate_url, collection_name, embedding_model)
-        self.splitter = SentenceSplitter(chunk_size=max_chunk_tokens, chunk_overlap=50)
+        logger.info(f"Initializing IngestionPipeline with policy: {policy_name}")
+        logger.info(f"Docs directory: {self.config.docs_dir}")
+
+        self.storage = WeaviateStorage(
+            self.config.weaviate_url, self.config.collection_name, self.config.embedding_model
+        )
+
+        # Ensure output directory exists for contracts
+        self.config.output_dir.mkdir(parents=True, exist_ok=True)
 
     def load_document(self, file_path: Path) -> Dict[str, Any]:
         """Load policy document from JSON file."""
@@ -42,72 +50,43 @@ class IngestionPipeline:
         with open(file_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    def create_chunks(self, document: Dict[str, Any]) -> List[PolicyChunk]:
-        """
-        Create chunks from document content.
-
-        Splits content by markdown headers and creates chunks with section paths.
-        """
+    def save_ingestion_contract(self, document: Dict[str, Any], chunks: List[PolicyChunk], file_path: Path):
+        """Save ingestion contract to JSON file."""
         metadata = document["metadata"]
-        content = document["content"]
 
-        logger.info(f"Processing: {metadata['document_name']}")
+        contract = {
+            "ingestion_metadata": {
+                "pipeline_name": self.policy.get_name(),
+                "pipeline_version": self.policy.get_version(),
+                "ingestion_date": datetime.datetime.now().isoformat(),
+                "source_file": file_path.name,
+            },
+            "document_metadata": metadata,
+            "chunks": [asdict(chunk) for chunk in chunks],
+        }
 
-        # Generate document_id from content hash
-        document_id = generate_document_id(content)
-        logger.info(f"Generated document_id: {document_id}")
+        # Construct output filename: {original_name}_{policy}_{timestamp or just policy}.json
+        # User example: policy_wfh_it_chunks.json
+        # We'll use: {stem}_chunks_{policy}.json
+        output_filename = f"{file_path.stem}_chunks_{self.policy.get_name()}.json"
+        output_path = self.config.output_dir / output_filename
 
-        # Split content by sections
-        sections = split_by_headers(content)
-        logger.info(f"Found {len(sections)} sections")
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(contract, f, indent=2, ensure_ascii=False)
 
-        # Create chunks
-        chunks = []
-        for section_path, section_text in sections:
-            section_path_str = " > ".join(section_path)
-
-            # Check if section is too long
-            if count_tokens(section_text) > self.max_chunk_tokens:
-                # Split into smaller chunks
-                logger.info(f"Section '{section_path_str}' is too long, splitting...")
-                sub_chunks = self.splitter.split_text(section_text)
-
-                for i, sub_chunk in enumerate(sub_chunks):
-                    chunk = create_policy_chunk(
-                        document_id=document_id,
-                        metadata=metadata,
-                        section_path=section_path,
-                        section_path_str=section_path_str,
-                        text=sub_chunk,
-                        chunk_index=len(chunks),
-                    )
-                    chunks.append(chunk)
-            else:
-                # Use section as-is
-                chunk = create_policy_chunk(
-                    document_id=document_id,
-                    metadata=metadata,
-                    section_path=section_path,
-                    section_path_str=section_path_str,
-                    text=section_text,
-                    chunk_index=len(chunks),
-                )
-                chunks.append(chunk)
-
-        logger.info(f"Created {len(chunks)} chunks")
-        return chunks
+        logger.info(f"Saved ingestion contract to: {output_path}")
 
     def run(self):
         """Run the full ingestion pipeline."""
         logger.info("=" * 80)
-        logger.info("Starting ingestion pipeline")
+        logger.info(f"Starting ingestion pipeline [{self.policy.get_name()}]")
         logger.info("=" * 80)
 
         # Setup collection
         self.storage.setup_collection()
 
         # Find all JSON files
-        json_files = list(self.docs_dir.glob("*.json"))
+        json_files = list(self.config.docs_dir.glob("*.json"))
         logger.info(f"Found {len(json_files)} JSON files")
 
         # Process each document
@@ -122,8 +101,11 @@ class IngestionPipeline:
                     logger.info(f"Skipping inactive document: {file_path.name}")
                     continue
 
-                # Create chunks
-                chunks = self.create_chunks(document)
+                # Create chunks using policy
+                chunks = self.policy.process_document(document)
+
+                # Save Contract JSON
+                self.save_ingestion_contract(document, chunks, file_path)
 
                 # Ingest chunks
                 self.storage.ingest_chunks(chunks)
@@ -131,9 +113,7 @@ class IngestionPipeline:
                 total_chunks += len(chunks)
 
             except Exception as e:
-                logger.error(f"Error processing {file_path.name}: {e}")
-                # We rename 'raise' to allow continuing with other files or fail completely?
-                # Original code raised, so we stick to that.
+                logger.error(f"Error processing {file_path.name}: {e}", exc_info=True)
                 raise
 
         logger.info("=" * 80)
