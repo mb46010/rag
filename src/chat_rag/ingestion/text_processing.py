@@ -68,13 +68,23 @@ def create_policy_chunk(
     section_path_str: str,
     text: str,
     chunk_index: int,
+    qa_text: str = "",
 ) -> PolicyChunk:
     """Create a PolicyChunk object."""
     # Generate chunk_id from content and path
     chunk_id = generate_chunk_id(document_id, section_path_str, text)
 
     # Create indexed text with prepended section path
-    text_indexed = f"{section_path_str}\n\n{text}"
+    # If qa_text is present, we might want to include it in the indexed text too, or strictly keep it separate.
+    # User's previous request ("enriching the text for retrieval") suggests we should index it somehow on the text side too?
+    # Or rely on Weaviate property.
+    # Let's keep `text_indexed` as: section_path + text + qa_text (if any).
+
+    text_indexed_parts = [section_path_str, text]
+    if qa_text:
+        text_indexed_parts.append(f"Questions this answer:\n{qa_text}")
+
+    text_indexed = "\n\n".join(text_indexed_parts)
 
     return PolicyChunk(
         document_id=document_id,
@@ -89,4 +99,5 @@ def create_policy_chunk(
         country=metadata["country"],
         active=metadata["active"],
         last_modified=metadata["last_modified"],
+        qa_text=qa_text,
     )

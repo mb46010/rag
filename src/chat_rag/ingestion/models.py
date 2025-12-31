@@ -18,3 +18,4 @@ class PolicyChunk:
     country: str
     active: bool
     last_modified: str
+    qa_text: str = ""  # Optional generated questions

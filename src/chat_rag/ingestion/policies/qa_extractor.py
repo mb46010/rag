@@ -81,13 +81,6 @@ class QaExtractorPolicy(IngestionPolicy):
             qa_text = node_metadata.get("questions_this_excerpt_can_answer", "")
 
             chunk_text = node.get_content()
-            if qa_text:
-                # Append QA to text or just let it exist in metadata?
-                # The user asked for "leverage ... transformations", likely to enrich the embedding.
-                # Standard LlamaIndex behavior embeds the metadata if configured.
-                # For our PolicyChunk, we store explicit text. Let's append questions to text for visibility/indexing
-                # similar to how we might want them retrieved.
-                chunk_text += f"\n\nQuestions this section can answer:\n{qa_text}"
 
             chunk = create_policy_chunk(
                 document_id=document_id,
@@ -96,6 +89,7 @@ class QaExtractorPolicy(IngestionPolicy):
                 section_path_str=section_path_str,
                 text=chunk_text,
                 chunk_index=i,
+                qa_text=qa_text,
             )
             chunks.append(chunk)
 

@@ -47,6 +47,7 @@ class WeaviateStorage:
                 Property(name="country", data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
                 Property(name="active", data_type=DataType.BOOL),
                 Property(name="last_modified", data_type=DataType.TEXT),
+                Property(name="qa_text", data_type=DataType.TEXT),
             ],
             vectorizer_config=Configure.Vectorizer.none(),  # BYOV mode
         )

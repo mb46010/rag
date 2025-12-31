@@ -182,6 +182,28 @@ This is the conclusion.""",
         assert "Header1 > Header2" in chunk.text_indexed
         assert "Test chunk text" in chunk.text_indexed
 
+    def test_create_chunk_with_qa(self):
+        """Test PolicyChunk creation with QA text."""
+        chunk = create_policy_chunk(
+            document_id="doc123",
+            metadata={
+                "document_name": "Test Doc",
+                "topic": "Test",
+                "country": "CH",
+                "active": True,
+                "last_modified": "2024-01-01",
+            },
+            section_path=["H1"],
+            section_path_str="H1",
+            text="Content",
+            chunk_index=0,
+            qa_text="What is this? Content.",
+        )
+
+        assert chunk.qa_text == "What is this? Content."
+        # Ensure it's in indexed text
+        assert "What is this? Content." in chunk.text_indexed
+
     def test_load_document(self, pipeline, sample_document, config):
         """Test loading document from JSON file."""
         # Create temp JSON file
