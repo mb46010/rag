@@ -31,6 +31,7 @@ env/
 # Environment variables
 .env
 .env.local
+.agents.md
 
 # IDEs
 .vscode/
@@ -70,7 +71,10 @@ Thumbs.db
 *.sqlite3
 specs/bugs.md
 specs/goal_v2.md
-.gitignore
+
+# others
 tests/verify_fix.py
 tests/repro_crash.py
 specs/goal.md
+agents.md
+scripts/demo/output/*
