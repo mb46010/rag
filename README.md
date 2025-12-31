@@ -38,19 +38,13 @@ This demo showcases a chatbot that:
 
 ## Setup
 
-### 1. Clone and Setup Virtual Environment
+### 1. Clone and Setup Environment
+
+Please follow the instructions in [INSTALL.md](INSTALL.md) to set up the environment with `uv`.
 
 ```bash
-# Create virtual environment
-python -m venv .venv
-
-# Activate virtual environment
-source .venv/bin/activate  # On Linux/Mac
-# or
-.venv\Scripts\activate  # On Windows
-
-# Install dependencies
-pip install -r requirements.txt
+uv lock
+uv sync
 ```
 
 ### 2. Configure Environment Variables
@@ -74,7 +68,7 @@ bash scripts/start_weaviate.sh
 
 ```bash
 # Run ingestion pipeline
-python src/ingestion.py
+uv run python -m chat_rag.ingestion
 
 # This will:
 # - Read policy documents from docs/
@@ -88,11 +82,8 @@ python src/ingestion.py
 In a separate terminal:
 
 ```bash
-# Activate virtual environment
-source .venv/bin/activate
-
 # Start MCP server
-python src/mcp_server.py
+uv run python -m chat_rag.mcp_server
 
 # Server will run on http://localhost:9000
 ```
@@ -102,11 +93,8 @@ python src/mcp_server.py
 In another terminal:
 
 ```bash
-# Activate virtual environment
-source .venv/bin/activate
-
 # Start Chainlit app
-chainlit run src/chainlit_app.py -w
+uv run chainlit run src/chat_rag/chainlit_app.py -w
 
 # App will run on http://localhost:8000
 ```
@@ -159,7 +147,7 @@ The agent has access to:
 ### Running Tests
 
 ```bash
-pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 ### Adding New Policies
@@ -181,7 +169,7 @@ pytest tests/ -v
 
 2. Re-run ingestion:
 ```bash
-python src/ingestion.py
+uv run python -m chat_rag.ingestion
 ```
 
 ### Debugging
@@ -212,7 +200,7 @@ curl http://localhost:9000/health
 **Missing embeddings:**
 ```bash
 # Re-run ingestion
-python src/ingestion.py
+uv run python -m chat_rag.ingestion
 ```
 
 ## License
