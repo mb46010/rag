@@ -60,6 +60,15 @@ dev = ["black", "isort", "flake8", "ruff", "djlint==1.36.4"]
 [dependency-groups]
 test = ["httpx>=0.28.1", "pytest>=8.3.5"]
 
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')"]

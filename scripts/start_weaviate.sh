@@ -1,6 +1,8 @@
 #!/bin/bash
 # Start Weaviate vector database in BYOV (Bring Your Own Vectors) mode
 # Weaviate will run on port 8080 and perform hybrid search (BM25 + vector similarity)
+# Data is persisted in a Docker volume named 'weaviate_data'.
+# To wipe the data completely, run: docker volume rm weaviate_data
 
 set -e
 
