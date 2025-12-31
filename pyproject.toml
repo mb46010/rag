@@ -55,6 +55,7 @@ dependencies = [
     "llama-index-vector-stores-weaviate>=1.4.1",
     "torch",
     "sentence-transformers",
+    "fastmcp>=2.14.2",
 ]
 
 [project.optional-dependencies]

@@ -15,6 +15,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 from langchain.tools import tool
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langfuse.langchain import CallbackHandler
 
 from chat_rag.retriever import HybridRetriever
 from .prompt import SYSTEM_PROMPT
@@ -100,9 +101,7 @@ class HRAssistantAgent:
             model = ChatOpenAI(model=self.model_name, temperature=self.temperature)
 
             # Create agent with LangGraph
-            self.agent = create_react_agent(
-                model=model, tools=tools, checkpointer=MemorySaver(), prompt=SYSTEM_PROMPT
-            )
+            self.agent = create_react_agent(model=model, tools=tools, checkpointer=MemorySaver(), prompt=SYSTEM_PROMPT)
 
             # Generate thread ID for conversation memory
             import uuid
@@ -134,7 +133,14 @@ class HRAssistantAgent:
 
         # Run agent
         inputs = {"messages": [HumanMessage(content=context_message)]}
-        config = {"configurable": {"thread_id": self.thread_id}}
+
+        # Initialize Langfuse handler
+        langfuse_handler = CallbackHandler()
+
+        config = {
+            "configurable": {"thread_id": self.thread_id},
+            "callbacks": [langfuse_handler],
+        }
 
         response_text = ""
         intermediate_steps = []
