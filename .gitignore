@@ -80,3 +80,4 @@ agents.md
 scripts/demo/output/*
 output.json
 scripts/debug/*
+output/*
