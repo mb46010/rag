@@ -9,6 +9,7 @@ import logging
 from typing import List, Optional
 import numpy as np
 from sentence_transformers import CrossEncoder
+from langfuse import observe
 
 from .models import PolicyChunk
 
@@ -44,6 +45,7 @@ class Reranker:
         self.high_confidence_threshold = 0.7
         self.medium_confidence_threshold = 0.4
 
+    @observe(as_type="generation")
     def rerank(
         self,
         query: str,
@@ -108,6 +110,7 @@ class Reranker:
             return "medium"
         return "low"
 
+    @observe(as_type="generation")
     def score_single(self, query: str, text: str) -> float:
         """
         Score a single query-text pair.

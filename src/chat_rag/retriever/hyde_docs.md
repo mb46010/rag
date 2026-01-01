@@ -54,3 +54,17 @@ The following table compares our custom implementation with the standard LlamaIn
 1.  **Efficiency**: By only running HyDE for "vague" queries, we significantly reduce average latency and OpenAI API costs.
 2.  **Precision**: We can control exactly how the hypothetical answer is merged with the original query (e.g., appending with specific headers).
 3.  **Observability**: We can easily flag and log when HyDE was used, which is critical for debugging retrieval issues in a production-like HR bot.
+
+## 4. Observability and Troubleshooting
+
+To aid in debugging retrieval performance, both the `HyDERetriever` and the underlying `EnhancedHybridRetriever` are instrumented with:
+
+-   **Detailed Logging**:
+    -   Candidate counts at each stage (initial hybrid search vs. reranking vs. filtering).
+    -   Top reranking scores to verify if the reranker is ranking relevant docs high.
+    -   Confidence distribution (High/Medium/Low) to explain why chunks might be dropped.
+    -   Explicit "No results" warnings with context.
+
+-   **Langfuse Tracing**:
+    -   All major retrieval methods (`retrieve`, `_rerank_chunks`, `_generate_hypothetical`) are decorated with `@observe(as_type="generation")`.
+    -   The retrieval visualization in Langfuse now shows the granular steps of fetching, reranking, and filtering, making it easier to pinpoint where recall loss occurs.

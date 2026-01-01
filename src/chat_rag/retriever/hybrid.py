@@ -14,6 +14,7 @@ import weaviate
 from weaviate.classes.query import MetadataQuery, Filter
 from llama_index.embeddings.openai import OpenAIEmbedding
 from sentence_transformers import CrossEncoder
+from langfuse import observe
 
 from .models import PolicyChunk, QueryType, RetrievalResult
 from .config import RetrievalConfig
@@ -125,6 +126,7 @@ class EnhancedHybridRetriever:
         }
         return alpha_map.get(query_type, self.config.alpha_default)
 
+    @observe(as_type="generation")
     def retrieve(
         self,
         query: str,
@@ -165,19 +167,27 @@ class EnhancedHybridRetriever:
             chunks = self._retrieve_hybrid(query, candidate_size, filters, alpha)
 
         if not chunks:
-            logger.warning("No results found")
+            logger.warning("No results found via initial search")
             return []
 
-        logger.info(f"Retrieved {len(chunks)} candidates")
+        logger.info(f"Retrieved {len(chunks)} candidates via hybrid search")
 
         # Rerank if enabled
         if self.config.enable_reranking and self.reranker:
             chunks = self._rerank_chunks(query, chunks, top_k)
+            logger.info(f"After reranking (top_k={top_k}): {len(chunks)} chunks kept")
         else:
             chunks = chunks[:top_k]
+            logger.info(f"No reranking (top_k={top_k}): {len(chunks)} chunks kept")
 
         # Assign confidence levels
         self._assign_confidence_levels(chunks)
+
+        # Log confidence distribution
+        conf_counts = {"high": 0, "medium": 0, "low": 0}
+        for c in chunks:
+            conf_counts[c.confidence_level] = conf_counts.get(c.confidence_level, 0) + 1
+        logger.info(f"Confidence levels: {conf_counts}")
 
         # Fetch context windows if enabled
         if self.config.enable_context_window:
@@ -190,12 +200,18 @@ class EnhancedHybridRetriever:
 
         # Filter low confidence (but keep at least one result)
         confident_chunks = [c for c in chunks if c.confidence_level != "low"]
+
         if not confident_chunks and chunks:
+            logger.info("All chunks low confidence - keeping best one as 'low_but_best'")
             chunks[0].confidence_level = "low_but_best"
             return [chunks[0]]
 
+        logger.info(
+            f"Final output: {len(confident_chunks)} chunks (filtered {len(chunks) - len(confident_chunks)} low confidence)"
+        )
         return confident_chunks
 
+    @observe(as_type="generation")
     def retrieve_with_metadata(
         self,
         query: str,
@@ -313,6 +329,7 @@ class EnhancedHybridRetriever:
 
         return result
 
+    @observe(as_type="generation")
     def _rerank_chunks(self, query: str, chunks: List[PolicyChunk], top_k: int) -> List[PolicyChunk]:
         """Rerank using CrossEncoder with calibrated scores.
 
@@ -333,6 +350,11 @@ class EnhancedHybridRetriever:
             chunk.score = float(cal)  # Override hybrid score with calibrated score
 
         chunks.sort(key=lambda x: x.score, reverse=True)
+
+        # Log top 3 scores for debugging
+        top_scores = [f"{c.score:.4f}" for c in chunks[:3]]
+        logger.info(f"Top rerank scores: {top_scores}")
+
         return chunks[:top_k]
 
     def _assign_confidence_levels(self, chunks: List[PolicyChunk]):

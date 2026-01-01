@@ -11,6 +11,7 @@ Reference: https://arxiv.org/abs/2212.10496
 
 import logging
 from typing import List, Dict, Any, Optional
+from langfuse import observe
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -28,11 +29,11 @@ Write as if you're quoting from an actual policy document - be specific, factual
 HYDE_EXAMPLES = [
     {
         "query": "How many vacation days do I get?",
-        "hypothetical": "Employees are entitled to 25 days of paid annual leave per calendar year. Leave accrues at a rate of 2.08 days per month of service. Unused leave may be carried over to the following year, up to a maximum of 5 days."
+        "hypothetical": "Employees are entitled to 25 days of paid annual leave per calendar year. Leave accrues at a rate of 2.08 days per month of service. Unused leave may be carried over to the following year, up to a maximum of 5 days.",
     },
     {
         "query": "Can I work from home?",
-        "hypothetical": "Eligible employees may work remotely up to 2 days per week with manager approval. Remote work arrangements must be documented in the HR system. Employees must maintain core hours of 10:00-15:00 for team collaboration."
+        "hypothetical": "Eligible employees may work remotely up to 2 days per week with manager approval. Remote work arrangements must be documented in the HR system. Employees must maintain core hours of 10:00-15:00 for team collaboration.",
     },
 ]
 
@@ -40,11 +41,11 @@ HYDE_EXAMPLES = [
 class HyDERetriever:
     """
     Retriever with Hypothetical Document Embeddings.
-    
+
     For vague queries, generates a hypothetical answer first,
     then retrieves documents similar to that answer.
     """
-    
+
     def __init__(
         self,
         base_retriever: EnhancedHybridRetriever,
@@ -63,47 +64,50 @@ class HyDERetriever:
         self.llm = llm or ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
         self.enable_for_all = enable_for_all
         self.vague_query_threshold = vague_query_threshold
-    
+
     def _should_use_hyde(self, query: str) -> bool:
         """Determine if HyDE would help this query."""
         if self.enable_for_all:
             return True
-        
+
         # Short queries benefit most from HyDE
         word_count = len(query.split())
         if word_count <= self.vague_query_threshold:
             return True
-        
+
         # Questions without specific keywords
         specific_indicators = ["how many", "what is the", "limit", "deadline", "rate"]
         if not any(ind in query.lower() for ind in specific_indicators):
             return True
-        
+
         return False
-    
+
+    @observe(as_type="generation")
     async def _generate_hypothetical(self, query: str) -> str:
         """Generate a hypothetical policy excerpt that would answer the query."""
         # Build few-shot prompt
-        examples_text = "\n\n".join([
-            f"Question: {ex['query']}\nPolicy excerpt: {ex['hypothetical']}"
-            for ex in HYDE_EXAMPLES
-        ])
-        
+        examples_text = "\n\n".join(
+            [f"Question: {ex['query']}\nPolicy excerpt: {ex['hypothetical']}" for ex in HYDE_EXAMPLES]
+        )
+
         prompt = f"""{examples_text}
 
 Question: {query}
 Policy excerpt:"""
-        
-        response = await self.llm.ainvoke([
-            SystemMessage(content=HYDE_SYSTEM_PROMPT),
-            HumanMessage(content=prompt),
-        ])
-        
+
+        response = await self.llm.ainvoke(
+            [
+                SystemMessage(content=HYDE_SYSTEM_PROMPT),
+                HumanMessage(content=prompt),
+            ]
+        )
+
         hypothetical = response.content.strip()
         logger.info(f"Generated hypothetical ({len(hypothetical)} chars) for: {query[:50]}...")
-        
+
         return hypothetical
-    
+
+    @observe(as_type="generation")
     async def aretrieve(
         self,
         query: str,
@@ -112,31 +116,31 @@ Policy excerpt:"""
     ) -> List[PolicyChunk]:
         """
         Retrieve with optional HyDE enhancement.
-        
+
         Args:
             query: User's question
             top_k: Number of results
             filters: Metadata filters
-            
+
         Returns:
             List of PolicyChunk with hyde_enhanced flag
         """
         use_hyde = self._should_use_hyde(query)
-        
+
         if use_hyde:
             # Generate hypothetical answer
             hypothetical = await self._generate_hypothetical(query)
-            
+
             # Combine original query with hypothetical for better embedding
             enhanced_query = f"{query}\n\nRelevant policy: {hypothetical}"
-            
+
             logger.info(f"Using HyDE-enhanced retrieval for: {query[:50]}...")
             chunks = self.base_retriever.retrieve(
                 enhanced_query,
                 top_k=top_k,
                 filters=filters,
             )
-            
+
             # Mark chunks as HyDE-enhanced
             for chunk in chunks:
                 chunk.hyde_enhanced = True
@@ -149,9 +153,10 @@ Policy excerpt:"""
             )
             for chunk in chunks:
                 chunk.hyde_enhanced = False
-        
+
         return chunks
-    
+
+    @observe(as_type="generation")
     def retrieve(
         self,
         query: str,
@@ -161,7 +166,7 @@ Policy excerpt:"""
         """Sync version - uses base retriever without HyDE."""
         logger.warning("Sync retrieve() called - HyDE requires async. Using base retriever.")
         return self.base_retriever.retrieve(query, top_k=top_k, filters=filters)
-    
+
     def close(self):
         """Close underlying retriever."""
         self.base_retriever.close()
