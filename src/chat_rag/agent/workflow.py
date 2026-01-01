@@ -24,6 +24,9 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from functools import wraps
+from langfuse.langchain import CallbackHandler
+from langfuse import observe
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from chat_rag.retriever import EnhancedHybridRetriever, RetrievalConfig
@@ -126,9 +129,7 @@ Instructions:
         if retriever:
             self.retriever = retriever
         else:
-            self.retriever = EnhancedHybridRetriever(
-                RetrievalConfig(enable_reranking=True)
-            )
+            self.retriever = EnhancedHybridRetriever(RetrievalConfig(enable_reranking=True))
 
         # Initialize LLM
         self.llm = ChatOpenAI(
@@ -266,6 +267,26 @@ Instructions:
         for tool in self._mcp_tools:
             if tool.name == tool_name:
                 result = await tool.ainvoke(args)
+
+                # Handle MCP list response (e.g. [TextContent(text='{...}')])
+                if isinstance(result, list):
+                    for item in result:
+                        # Case 1: Item is an object with a 'text' attribute (TextContent)
+                        if hasattr(item, "text"):
+                            try:
+                                import json
+
+                                return json.loads(item.text)
+                            except (json.JSONDecodeError, TypeError):
+                                continue
+                        # Case 2: Item is already a dict
+                        elif isinstance(item, dict):
+                            return item
+
+                    # If we got a list but couldn't extracting anything, return empty or error
+                    logger.warning(f"MCP tool {tool_name} returned a list but no valid JSON/dict found: {result}")
+                    return {"error": "Invalid tool response format"}
+
                 return result
 
         raise ValueError(f"Tool {tool_name} not found")
@@ -276,9 +297,7 @@ Instructions:
 
         # Fetch profile
         try:
-            profile = await self._call_mcp_tool(
-                "get_employee_profile_tool", {"email": self.user_email}
-            )
+            profile = await self._call_mcp_tool("get_employee_profile_tool", {"email": self.user_email})
             results["employee_profile"] = profile
             logger.info(f"Fetched profile for {self.user_email}")
         except Exception as e:
@@ -287,9 +306,7 @@ Instructions:
 
         # Fetch PTO balance
         try:
-            balance = await self._call_mcp_tool(
-                "get_time_off_balance_tool", {"email": self.user_email}
-            )
+            balance = await self._call_mcp_tool("get_time_off_balance_tool", {"email": self.user_email})
             results["time_off_balance"] = balance
             logger.info(f"Fetched PTO balance for {self.user_email}")
         except Exception as e:
@@ -341,9 +358,7 @@ Instructions:
         # Parallel execution
         # First get profile to use country filter for policies
         try:
-            profile = await self._call_mcp_tool(
-                "get_employee_profile_tool", {"email": self.user_email}
-            )
+            profile = await self._call_mcp_tool("get_employee_profile_tool", {"email": self.user_email})
         except Exception as e:
             profile = {"error": str(e)}
 
@@ -352,9 +367,7 @@ Instructions:
 
         async def fetch_pto():
             try:
-                return await self._call_mcp_tool(
-                    "get_time_off_balance_tool", {"email": self.user_email}
-                )
+                return await self._call_mcp_tool("get_time_off_balance_tool", {"email": self.user_email})
             except Exception as e:
                 return {"error": str(e)}
 
@@ -364,9 +377,7 @@ Instructions:
         pto_task = asyncio.create_task(fetch_pto())
         policy_task = asyncio.create_task(fetch_policies())
 
-        pto_result, policy_result = await asyncio.gather(
-            pto_task, policy_task, return_exceptions=True
-        )
+        pto_result, policy_result = await asyncio.gather(pto_task, policy_task, return_exceptions=True)
 
         # Handle exceptions
         if isinstance(pto_result, Exception):
@@ -403,25 +414,17 @@ Instructions:
         if state.get("time_off_balance") and "error" not in state["time_off_balance"]:
             balance = state["time_off_balance"]
             context_parts.append(
-                "**Time Off Balance:**\n"
-                f"• Days remaining: {balance.get('number_of_days_left', 'N/A')}"
+                f"**Time Off Balance:**\n• Days remaining: {balance.get('number_of_days_left', 'N/A')}"
             )
 
         # Policy results
         if state.get("policy_results"):
             policy_text = "\n\n".join(
-                [
-                    f"[{p['source']}] (confidence: {p['confidence']})\n{p['text']}"
-                    for p in state["policy_results"]
-                ]
+                [f"[{p['source']}] (confidence: {p['confidence']})\n{p['text']}" for p in state["policy_results"]]
             )
             context_parts.append(f"**Relevant Policies:**\n{policy_text}")
 
-        context = (
-            "\n\n---\n\n".join(context_parts)
-            if context_parts
-            else "No context available."
-        )
+        context = "\n\n---\n\n".join(context_parts) if context_parts else "No context available."
 
         # Generate response
         prompt = self.SYNTHESIS_PROMPT.format(context=context, query=query)
@@ -439,6 +442,7 @@ Instructions:
     # Public interface
     # -------------------------
 
+    @observe(as_type="agent")
     async def arun(self, message: str) -> Dict[str, Any]:
         """
         Execute the workflow.
@@ -460,7 +464,11 @@ Instructions:
             "final_response": None,
         }
 
-        result = await self.graph.ainvoke(initial_state)
+        # Initialize Langfuse handler for LangChain components
+        langfuse_handler = CallbackHandler()
+
+        # Run graph with callbacks
+        result = await self.graph.ainvoke(initial_state, config={"callbacks": [langfuse_handler]})
 
         return {
             "output": result.get("final_response", "Unable to generate response."),
@@ -476,6 +484,7 @@ Instructions:
             "error": result.get("error"),
         }
 
+    @observe(as_type="agent")
     async def astream(self, message: str):
         """
         Stream workflow execution with progress updates.
@@ -504,7 +513,12 @@ Instructions:
             "handle_out_of_scope": "ℹ️ ",
         }
 
-        async for event in self.graph.astream(initial_state, stream_mode="updates"):
+        # Initialize Langfuse handler
+        langfuse_handler = CallbackHandler()
+
+        async for event in self.graph.astream(
+            initial_state, stream_mode="updates", config={"callbacks": [langfuse_handler]}
+        ):
             node_name = list(event.keys())[0]
             node_output = event[node_name]
 

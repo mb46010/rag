@@ -61,7 +61,8 @@ Categories:
 - "chitchat": Greetings or casual conversation
   Examples: "Hello", "Thanks!"
 
-- "out_of_scope": Not HR-related
-  Examples: "What's the weather?", "Help me code"
+- "out_of_scope": Not HR-related. Don't be strict: better to err on side of ["hybrid"] than ["out_of_scope"].
+  Don't forget the user is asking for HELP: "My laptop was stolen, what should I do?" is actually HR-related (asking for policy).
+  Examples: "What's the weather?", "Help me code", "What's the best pizza place in town?"
 
 Respond with ONLY the category name."""
