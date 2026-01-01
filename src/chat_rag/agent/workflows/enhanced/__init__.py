@@ -1,4 +1,7 @@
 from .workflow import EnhancedHRWorkflowAgent
-from .state import EnhancedAgentState
+from .state import AgentState
 
-__all__ = ["EnhancedHRWorkflowAgent", "EnhancedAgentState"]
+# Alias for backward compatibility
+EnhancedAgentState = AgentState
+
+__all__ = ["EnhancedHRWorkflowAgent", "AgentState", "EnhancedAgentState"]

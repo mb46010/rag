@@ -2,34 +2,45 @@ from typing import TypedDict, Annotated, Optional, List, Dict
 from langgraph.graph.message import add_messages
 
 
-class EnhancedAgentState(TypedDict):
-    """State with additional fields for new features."""
+class UserContext(TypedDict):
+    """User context information."""
 
-    messages: Annotated[list, add_messages]
-    user_email: str
-    query_id: str
+    email: str
+    profile: Optional[Dict]
+    pto_balance: Optional[Dict]
 
-    # Original and resolved query
+
+class RetrievalContext(TypedDict):
+    """Retrieval related state."""
+
     original_query: str
     resolved_query: str
+    chunks: List[Dict]
+    hyde_used: bool
 
-    # Intent and routing
+
+class ResponseContext(TypedDict):
+    """Response generation state."""
+
     intent: Optional[str]
     needs_clarification: bool
     clarifying_question: Optional[str]
 
-    # Data gathered
-    employee_profile: Optional[Dict]
-    time_off_balance: Optional[Dict]
-    policy_results: Optional[List[Dict]]
 
-    # Enhanced features
-    highlighted_sources: Optional[str]
-    hyde_used: bool
+class AgentState(TypedDict):
+    """Cleaner state with logical groupings."""
 
-    # Output
+    messages: Annotated[list, add_messages]
+
+    # Grouped contexts
+    user: UserContext
+    retrieval: RetrievalContext
+    response: ResponseContext
+
+    # Final output
     final_response: Optional[str]
+    highlighted_sources: Optional[str]
     error: Optional[str]
 
-    # Internal usage for highlighting
-    _chunks: Optional[List]
+    # Tracking
+    query_id: str

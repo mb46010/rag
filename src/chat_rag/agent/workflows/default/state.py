@@ -13,14 +13,36 @@ class QueryIntent(Enum):
     OUT_OF_SCOPE = "out_of_scope"  # Not HR-related
 
 
+class UserContext(TypedDict):
+    """User related context."""
+
+    email: str
+    profile: Optional[Dict]
+    pto_balance: Optional[Dict]
+
+
+class RetrievalContext(TypedDict):
+    """Retrieval related state."""
+
+    policy_results: Optional[List[Dict]]
+
+
+class ResponseContext(TypedDict):
+    """Response generation state."""
+
+    intent: Optional[str]
+
+
 class AgentState(TypedDict):
     """State that flows through the workflow graph."""
 
     messages: Annotated[list, add_messages]
-    user_email: str
-    intent: Optional[str]
-    employee_profile: Optional[Dict]
-    time_off_balance: Optional[Dict]
-    policy_results: Optional[List[Dict]]
-    error: Optional[str]
+
+    # Grouped contexts
+    user: UserContext
+    retrieval: RetrievalContext
+    response: ResponseContext
+
+    # Output
     final_response: Optional[str]
+    error: Optional[str]

@@ -2,9 +2,10 @@ import logging
 import os
 import uuid
 import json
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -19,8 +20,15 @@ from chat_rag.agent.clarification import ClarificationDetector
 from chat_rag.agent.highlighting import SourceHighlighter
 from chat_rag.agent.memory import SessionMemory
 
-from .state import EnhancedAgentState
-from .nodes import EnhancedWorkflowNodes
+from .state import AgentState
+from .nodes.mcp import MCPNode
+from .nodes.retrieval import RetrievalNode
+from .nodes.synthesis import SynthesisNode
+from .nodes.clarification import ClarificationNode
+from .nodes.routing import RoutingNode
+from .nodes.highlighting import HighlightingNode
+from .nodes.memory_node import MemoryNode
+from .nodes.error_handling import handle_error
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +46,7 @@ class EnhancedHRWorkflowAgent:
         enable_highlighting: bool = True,
         enable_memory: bool = True,
         enable_cost_tracking: bool = True,
+        checkpointer: Any = None,
     ):
         """Initialize the enhanced HR workflow agent."""
         self.user_email = user_email
@@ -64,14 +73,11 @@ class EnhancedHRWorkflowAgent:
             self.retriever = EnhancedHybridRetriever(RetrievalConfig(enable_reranking=True))
             self.owns_retriever = True
 
-        if enable_hyde:
+        if enable_hyde and not isinstance(self.retriever, HyDERetriever):
             self.retriever = HyDERetriever(
                 base_retriever=self.retriever,
                 llm=ChatOpenAI(model="gpt-4o-mini", temperature=0.7),
             )
-        else:
-            # Already initialized in self.retriever above
-            pass
 
         # Initialize feature modules
         self.clarification_detector = ClarificationDetector() if enable_clarification else None
@@ -79,39 +85,33 @@ class EnhancedHRWorkflowAgent:
         self.memory = SessionMemory(max_turns=10) if enable_memory else None
         self.cost_tracker = CostTracker() if enable_cost_tracking else None
 
+        # Checkpointer
+        self.checkpointer = checkpointer or MemorySaver()
+
         # Load prompts
         self.prompts = self._load_prompts()
 
-        # Initialize Nodes helper
-        self.nodes = EnhancedWorkflowNodes(
-            llm=self.llm,
-            retriever=self.retriever,
-            config=self.config,
-            user_email=self.user_email,
-            prompts=self.prompts,
-            enable_hyde=enable_hyde,
-            enable_clarification=enable_clarification,
-            enable_highlighting=enable_highlighting,
-            enable_memory=enable_memory,
-            enable_cost_tracking=enable_cost_tracking,
-            clarification_detector=self.clarification_detector,
-            highlighter=self.highlighter,
-            memory=self.memory,
+        # Initialize Nodes
+        self.mcp_node = MCPNode(mcp_url=self.config.mcp_url, user_email=self.user_email)
+        self.retrieval_node = RetrievalNode(retriever=self.retriever, enable_hyde=enable_hyde)
+        self.synthesis_node = SynthesisNode(
+            llm=self.llm, prompts=self.prompts, enable_memory=enable_memory, memory=self.memory
         )
+        self.clarification_node = ClarificationNode(
+            detector=self.clarification_detector, prompts=self.prompts, enable_memory=enable_memory, memory=self.memory
+        )
+        self.routing_node = RoutingNode(llm=self.llm, prompts=self.prompts)
+        self.highlighting_node = HighlightingNode(highlighter=self.highlighter)
+        self.memory_node = MemoryNode(memory=self.memory)
 
         # Build graph
         self.graph = self._build_graph()
 
         logger.info(f"EnhancedHRWorkflowAgent initialized for {user_email}")
-        logger.info(
-            f"Features: HyDE={enable_hyde}, Clarification={enable_clarification}, "
-            f"Highlighting={enable_highlighting}, Memory={enable_memory}"
-        )
 
     def _load_prompts(self) -> Dict[str, str]:
-        """Load prompts from the enhanced_workflow prompts directory."""
+        """Load prompts."""
         prompts = {}
-        # Path adjustment: src/chat_rag/agent/workflows/enhanced/workflow.py -> src/chat_rag/agent
         base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         prompts_dir = os.path.join(base_path, "prompts", "enhanced_workflow")
 
@@ -125,107 +125,202 @@ class EnhancedHRWorkflowAgent:
                     prompts[name] = "\n".join(prompt_data)
                 else:
                     prompts[name] = prompt_data
-                logger.info(f"Loaded enhanced workflow prompt '{name}' (version {data.get('version', 'unknown')})")
             except Exception as e:
-                logger.error(f"Failed to load prompt '{name}' from {path}: {e}")
+                logger.error(f"Failed to load prompt '{name}': {e}")
                 prompts[name] = ""
 
         return prompts
 
     def _build_graph(self) -> StateGraph:
         """Build enhanced workflow graph."""
-        graph = StateGraph(EnhancedAgentState)
+        graph = StateGraph(AgentState)
 
-        # Nodes
-        graph.add_node("resolve_context", self.nodes.resolve_context)
-        graph.add_node("fetch_profile", self.nodes.fetch_profile)
-        graph.add_node("check_ambiguity", self.nodes.check_ambiguity)
-        graph.add_node("ask_clarification", self.nodes.ask_clarification)
-        graph.add_node("classify_intent", self.nodes.classify_intent)
-        graph.add_node("gather_data", self.nodes.gather_data)
-        graph.add_node("synthesize", self.nodes.synthesize)
-        graph.add_node("highlight_sources", self.nodes.highlight_sources)
+        # Add Nodes
+        graph.add_node("resolve_context", self.memory_node.resolve_context)
+        graph.add_node("fetch_profile", self.mcp_node.fetch_profile)
+        graph.add_node("fetch_pto", self.mcp_node.fetch_pto)
+        graph.add_node("check_ambiguity", self.clarification_node.check_ambiguity)
+        graph.add_node("ask_clarification", self.clarification_node.ask_clarification)
+        graph.add_node("classify_intent", self.routing_node.classify_intent)
+        graph.add_node("search_policies", self.retrieval_node.search_policies)
+        graph.add_node("synthesize", self.synthesis_node.synthesize)
+        graph.add_node("highlight_sources", self.highlighting_node.highlight_sources)
+        graph.add_node("handle_error", handle_error)
 
-        # Edges
+        # Define Edges
         graph.add_edge(START, "resolve_context")
         graph.add_edge("resolve_context", "fetch_profile")
         graph.add_edge("fetch_profile", "check_ambiguity")
 
-        # Conditional: ambiguous → ask, else continue
+        # Ambiguity Check
+        def check_ambiguity_route(state: AgentState):
+            if state.get("error"):
+                return "error"
+            if state.get("response", {}).get("needs_clarification"):
+                return "ask"
+            return "continue"
+
         graph.add_conditional_edges(
             "check_ambiguity",
-            lambda s: "ask" if s.get("needs_clarification") else "continue",
-            {
-                "ask": "ask_clarification",
-                "continue": "classify_intent",
-            },
+            check_ambiguity_route,
+            {"error": "handle_error", "ask": "ask_clarification", "continue": "classify_intent"},
         )
 
         graph.add_edge("ask_clarification", END)
-        graph.add_edge("classify_intent", "gather_data")
-        graph.add_edge("gather_data", "synthesize")
+
+        # Intent Routing
+        def intent_route(state: AgentState):
+            if state.get("error"):
+                return "error"
+            intent = state.get("response", {}).get("intent", "hybrid")
+            if intent == "personal_only":
+                return "personal"
+            if intent == "policy_only":
+                return "policy"
+            return "hybrid"
+
+        graph.add_conditional_edges(
+            "classify_intent",
+            intent_route,
+            {
+                "error": "handle_error",
+                "personal": "fetch_pto",
+                "policy": "search_policies",
+                "hybrid": "fetch_pto",  # Fetch PTO then Policies (simulating hybrid)
+            },
+        )
+
+        # Data Gathering Paths
+        # Personal path: fetch_pto -> synthesize
+        graph.add_edge(
+            "fetch_pto", "search_policies"
+        )  # Simplified: always search policies if hybrid, or if routing says so.
+        # Wait, if intent is personal_only, we shouldn't search policies.
+        # I need to fix logic above.
+
+        # Let's use specific routing logic more carefully
+        # If personal: fetch_pto -> synthesize
+        # If policy: search_policies -> synthesize
+        # If hybrid: fetch_pto -> search_policies -> synthesize
+
+        # Revised Intent Routing:
+        # We need intermediate logic or carefully wired edges.
+        # graph.add_edge("fetch_pto", "synthesize") won't work if we want hybrid to go to search_policies.
+        # We can add a conditional edge after fetch_pto
+
+        pass
+        # I'll restart the edges definition below cleaner
+
+        return self._build_graph_edges(graph)
+
+    def _build_graph_edges(self, graph: StateGraph) -> Any:
+        # Re-defining edges for clarity
+        graph.add_edge(START, "resolve_context")
+        graph.add_edge("resolve_context", "fetch_profile")
+        graph.add_edge("fetch_profile", "check_ambiguity")
+
+        def check_ambiguity_route(state):
+            if state.get("error"):
+                return "error"
+            if state.get("response", {}).get("needs_clarification"):
+                return "ask"
+            return "continue"
+
+        graph.add_conditional_edges(
+            "check_ambiguity",
+            check_ambiguity_route,
+            {"error": "handle_error", "ask": "ask_clarification", "continue": "classify_intent"},
+        )
+        graph.add_edge("ask_clarification", END)
+
+        def route_after_intent(state):
+            if state.get("error"):
+                return "error"
+            intent = state.get("response", {}).get("intent", "hybrid")
+            if intent == "personal_only":
+                return "fetch_pto"
+            if intent == "policy_only":
+                return "search_policies"
+            return "fetch_pto_hybrid"  # Goes to PTO then Policies
+
+        graph.add_conditional_edges(
+            "classify_intent",
+            route_after_intent,
+            {
+                "error": "handle_error",
+                "fetch_pto": "fetch_pto",
+                "fetch_pto_hybrid": "fetch_pto",
+                "search_policies": "search_policies",
+            },
+        )
+
+        # From fetch_pto, determine if we need to go to policies (hybrid) or synthesis (personal)
+        def route_after_pto(state):
+            if state.get("error"):
+                return "error"  # Simple error check
+            intent = state.get("response", {}).get("intent", "hybrid")
+            if intent == "hybrid":
+                return "search_policies"
+            return "synthesize"
+
+        graph.add_conditional_edges(
+            "fetch_pto",
+            route_after_pto,
+            {"error": "handle_error", "search_policies": "search_policies", "synthesize": "synthesize"},
+        )
+
+        graph.add_edge("search_policies", "synthesize")
         graph.add_edge("synthesize", "highlight_sources")
         graph.add_edge("highlight_sources", END)
+        graph.add_edge("handle_error", END)
 
-        return graph.compile()
-
-    # ─────────────────────────────────────────────────────────────
-    # Public interface
-    # ─────────────────────────────────────────────────────────────
+        # Checkpointer is enabled
+        return graph.compile(checkpointer=self.checkpointer)
 
     @observe(as_type="agent")
-    async def arun(self, message: str) -> Dict[str, Any]:
+    async def arun(self, message: str, thread_id: str = None) -> Dict[str, Any]:
         """Execute workflow with full tracking."""
         query_id = str(uuid.uuid4())[:8]
+        if not thread_id:
+            thread_id = str(uuid.uuid4())
 
-        initial_state: EnhancedAgentState = {
+        initial_state: AgentState = {
             "messages": [HumanMessage(content=message)],
-            "user_email": self.user_email,
             "query_id": query_id,
-            "original_query": message,
-            "resolved_query": message,
-            "intent": None,
-            "needs_clarification": False,
-            "clarifying_question": None,
-            "employee_profile": None,
-            "time_off_balance": None,
-            "policy_results": None,
-            "highlighted_sources": None,
-            "hyde_used": False,
+            "user": {"email": self.user_email, "profile": None, "pto_balance": None},
+            "retrieval": {"original_query": message, "resolved_query": message, "chunks": [], "hyde_used": False},
+            "response": {"intent": None, "needs_clarification": False, "clarifying_question": None},
             "final_response": None,
+            "highlighted_sources": None,
             "error": None,
         }
 
-        # Initialize Langfuse handler
         langfuse_handler = CallbackHandler()
+        config = {"configurable": {"thread_id": thread_id}, "callbacks": [langfuse_handler]}
 
-        # Track cost if enabled
-        if self.enable_cost_tracking:
-            with self.cost_tracker.track_query(query_id, self.user_email, message) as metrics:
-                result = await self.graph.ainvoke(initial_state, config={"callbacks": [langfuse_handler]})
-                metrics.hyde_used = result.get("hyde_used", False)
-                metrics.chunks_retrieved = len(result.get("policy_results") or [])
-        else:
-            result = await self.graph.ainvoke(initial_state, config={"callbacks": [langfuse_handler]})
+        result = await self.graph.ainvoke(initial_state, config=config)
 
-        # Build response
+        # Extract output
         output = result.get("final_response", "Unable to generate response.")
-
-        # Append highlighted sources if available
         if result.get("highlighted_sources"):
-            output += result["highlighted_sources"]
+            output += "\n\n" + result["highlighted_sources"]
 
         return {
             "output": output,
             "query_id": query_id,
-            "intent": result.get("intent"),
-            "hyde_used": result.get("hyde_used", False),
-            "clarification_requested": result.get("needs_clarification", False),
-            "sources_count": len(result.get("policy_results") or []),
+            "intent": result["response"].get("intent"),
+            "hyde_used": result["retrieval"].get("hyde_used", False),
+            "clarification_requested": result["response"].get("needs_clarification", False),
+            "sources_count": len(result["retrieval"].get("chunks", [])),
+            "thread_id": thread_id,
         }
 
+    async def close(self):
+        if self.owns_retriever and hasattr(self.retriever, "close"):
+            self.retriever.close()
+
     @observe(as_type="agent")
-    async def astream(self, message: str):
+    async def astream(self, message: str, thread_id: str = None):
         """
         Stream workflow execution with progress updates.
 
@@ -233,22 +328,17 @@ class EnhancedHRWorkflowAgent:
             Dict with type ('progress' or 'complete') and data
         """
         query_id = str(uuid.uuid4())[:8]
+        if not thread_id:
+            thread_id = str(uuid.uuid4())
 
-        initial_state: EnhancedAgentState = {
+        initial_state: AgentState = {
             "messages": [HumanMessage(content=message)],
-            "user_email": self.user_email,
             "query_id": query_id,
-            "original_query": message,
-            "resolved_query": message,
-            "intent": None,
-            "needs_clarification": False,
-            "clarifying_question": None,
-            "employee_profile": None,
-            "time_off_balance": None,
-            "policy_results": None,
-            "highlighted_sources": None,
-            "hyde_used": False,
+            "user": {"email": self.user_email, "profile": None, "pto_balance": None},
+            "retrieval": {"original_query": message, "resolved_query": message, "chunks": [], "hyde_used": False},
+            "response": {"intent": None, "needs_clarification": False, "clarifying_question": None},
             "final_response": None,
+            "highlighted_sources": None,
             "error": None,
         }
 
@@ -257,89 +347,50 @@ class EnhancedHRWorkflowAgent:
             "check_ambiguity": "🔍 Checking for ambiguity...",
             "ask_clarification": "💬 Asking for clarification...",
             "classify_intent": "🏷️ Classifying intent...",
-            "gather_data": "📊 Gathering information...",
+            "fetch_profile": "👤 Fetching profile...",
+            "fetch_pto": "📅 Fetching PTO balance...",
+            "search_policies": "📚 Searching policies...",
             "synthesize": "✍️ Preparing response...",
             "highlight_sources": "📽️ Highlighting sources...",
+            "handle_error": "⚠️ Handling error...",
         }
 
-        # Initialize Langfuse handler
         langfuse_handler = CallbackHandler()
+        config = {"configurable": {"thread_id": thread_id}, "callbacks": [langfuse_handler]}
 
         node_output = {}
-
-        # Determine if we should track cost
-        metrics_context = (
-            self.cost_tracker.track_query(query_id, self.user_email, message) if self.enable_cost_tracking else None
-        )
+        final_response_acc = None
+        highlighted_sources_acc = None
 
         try:
-            # We use a dummy context if tracking is disabled
-            class DummyMetrics:
-                hyde_used = False
-                chunks_retrieved = 0
+            async for event in self.graph.astream(initial_state, stream_mode="updates", config=config):
+                node_name = list(event.keys())[0]
+                node_output = event[node_name]
 
-                def __enter__(self):
-                    return self
+                # Handling accumulating state changes is tricky with nested state updates
+                # but 'node_output' contains only the update key.
+                # E.g. {"user": {...}} or {"final_response": "..."}
 
-                def __exit__(self, *args):
-                    pass
+                if "final_response" in node_output:
+                    final_response_acc = node_output["final_response"]
+                if "highlighted_sources" in node_output:
+                    highlighted_sources_acc = node_output["highlighted_sources"]
 
-            # Track accumulated outputs
-            final_response_acc = None
-            highlighted_sources_acc = None
-
-            context = metrics_context or DummyMetrics()
-
-            with context as metrics:
-                async for event in self.graph.astream(
-                    initial_state, stream_mode="updates", config={"callbacks": [langfuse_handler]}
-                ):
-                    node_name = list(event.keys())[0]
-                    node_output = event[node_name] or {}
-
-                    # Accumulate outputs if present
-                    if "final_response" in node_output:
-                        final_response_acc = node_output["final_response"]
-                    if "highlighted_sources" in node_output:
-                        highlighted_sources_acc = node_output["highlighted_sources"]
-
-                    if node_name == "gather_data" and not isinstance(metrics, DummyMetrics):
-                        metrics.hyde_used = node_output.get("hyde_used", False)
-                        metrics.chunks_retrieved = len(node_output.get("policy_results") or [])
-
-                    yield {
-                        "type": "progress",
-                        "step": node_name,
-                        "message": step_names.get(node_name, f"Processing: {node_name}"),
-                        "data": node_output,
-                    }
+                yield {
+                    "type": "progress",
+                    "step": node_name,
+                    "message": step_names.get(node_name, f"Processing: {node_name}"),
+                    "data": node_output,
+                }
         except Exception as e:
             logger.error(f"astream error: {e}", exc_info=True)
-            node_output = {"error": str(e), "final_response": f"Error: {str(e)}"}
-            final_response_acc = node_output["final_response"]
+            yield {"type": "progress", "step": "error", "message": f"Error: {str(e)}", "data": {"error": str(e)}}
+            final_response_acc = f"Error: {str(e)}"
 
         # Final response
         final_response = final_response_acc or node_output.get("final_response", "Unable to generate response.")
 
-        # Append highlighted sources if available
-        # Note: Use the accumulated valid sources, or check node_output if it was the last step
-        sources_to_append = highlighted_sources_acc or node_output.get("highlighted_sources")
-        if sources_to_append:
-            final_response += sources_to_append
+        if highlighted_sources_acc:
+            final_response += "\n\n" + highlighted_sources_acc
 
         yield {"type": "complete", "response": final_response}
-
-    def get_cost_summary(self) -> Dict:
-        """Get cost tracking summary."""
-        if self.enable_cost_tracking:
-            return self.cost_tracker.get_summary()
-        return {"tracking_enabled": False}
-
-    async def close(self):
-        """Clean up resources."""
-        if self.owns_retriever and hasattr(self.retriever, "close"):
-            self.retriever.close()
-            logger.info("Closed agent-owned retriever")
-
-        if self.enable_cost_tracking:
-            logger.info(f"Session cost summary: {self.get_cost_summary()}")
