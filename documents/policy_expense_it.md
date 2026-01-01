@@ -18,29 +18,26 @@ The company reimburses employees for necessary and reasonable business expenses 
 - **Personal Car Usage**: Mileage is reimbursed at the current ACI standard rate. Gas is not reimbursed separately for personal cars; it is covered by the mileage rate.
 
 ## 4. Lodging
-- **Hotels**: Standard rooms in business-class hotels (e.g., Marriott, Hilton, Hyatt) are preferred. The nightly cap is €250 in standard cities and €350 in high-cost cities (NY, London, SF, Tokyo, etc.).
+- **Hotels**: Standard rooms in business-class hotels (e.g., Marriott, Hilton, Hyatt) are preferred. The nightly cap is €350 in standard cities and €550 in high-cost cities (NY, London, SF, Tokyo, etc.).
 - **Airbnb/Vrbo**: Permitted if the cost is lower than a comparable hotel and safety standards are met.
-- **Laundry**: Reasonable laundry expenses are reimbursable for trips exceeding 5 nights.
+- **Laundry**: Reasonable laundry expenses are reimbursable for trips exceeding 3 nights.
 
 ## 5. Meals and Entertainment
-- **Per Diem**: Employees may claim actual expenses up to a daily limit of €75 for full days of travel. This covers breakfast, lunch, and dinner.
+- **Per Diem**: Employees may claim actual expenses up to a daily limit of €200 for full days of travel. This covers breakfast, lunch, and dinner.
 - **Client Meals**: Reasonable expenses for client entertainment are reimbursable. A list of attendees and the business purpose must be documented.
     - **Limits**: Up to €100 per person. VP approval is required for amounts exceeding €200 per person.
 - **Alcohol**: A moderate amount of alcohol with dinner is reimbursable. Excessive drinking is strictly prohibited and will not be reimbursed.
 
 ## 6. Non-Reimbursable Expenses
 The following are strictly non-reimbursable:
-- Personal grooming items (haircuts, toiletries).
-- Traffic or parking fines.
 - In-flight movies or entertainment.
 - Spousal or family travel expenses.
 - Clothing or luggage.
-- Lost or stolen personal property.
 
 ## 7. Expense Reporting
-- **Submission Deadline**: Expenses must be submitted within 30 days of incurring the expense.
-- **Receipts**: Receipts are required for all individual expenses over €25. Digital copies/photos are acceptable.
-- **Approval Flow**: Reports must be approved by the direct manager. Expenses over €2,000 require secondary approval from the Department Head.
+- **Submission Deadline**: Expenses must be submitted within 60 days of incurring the expense.
+- **Receipts**: Receipts are required for all individual expenses over €15. Digital copies/photos are acceptable.
+- **Approval Flow**: Reports must be approved by the direct manager. Expenses over €1,000 require secondary approval from the Department Head.
 
 ## 8. Corporate Credit Cards
-Employees who travel frequently (more than 3 times a year) are eligible for a corporate credit card. Personal expenses must strictly not be charged to the corporate card. Accidental personal charges must be repaid to the company immediately.
+Employees who travel frequently (more than 5 times a year) are eligible for a corporate credit card. Personal expenses must strictly not be charged to the corporate card. Accidental personal charges must be repaid to the company immediately.
