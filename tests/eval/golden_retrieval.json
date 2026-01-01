@@ -1,0 +1,76 @@
+{
+  "description": "Golden test cases for retrieval evaluation",
+  "version": "1.0",
+  "test_cases": [
+    {
+      "query": "How many PTO days do new employees get?",
+      "expected_doc_ids": ["pol_pto"],
+      "expected_sections": ["Accrual"],
+      "tags": ["factual", "PTO", "CH"],
+      "description": "Basic PTO accrual question"
+    },
+    {
+      "query": "What's the expense limit for meals during travel?",
+      "expected_doc_ids": ["pol_expense"],
+      "expected_sections": ["Travel Expenses", "Meal Expenses"],
+      "tags": ["factual", "expenses"],
+      "description": "Expense policy question with specific limit"
+    },
+    {
+      "query": "How does the work from home policy work?",
+      "expected_doc_ids": ["pol_wfh"],
+      "expected_sections": ["Overview", "Eligibility"],
+      "tags": ["conceptual", "WFH"],
+      "description": "WFH policy explanation"
+    },
+    {
+      "query": "What are the steps to request parental leave?",
+      "expected_doc_ids": ["pol_parental"],
+      "expected_sections": ["Request Process"],
+      "tags": ["procedural", "leave"],
+      "description": "Parental leave process steps"
+    },
+    {
+      "query": "What equipment can I expense for my home office?",
+      "expected_doc_ids": ["pol_wfh", "pol_expense"],
+      "expected_sections": ["Equipment", "Home Office"],
+      "tags": ["factual", "WFH", "expenses"],
+      "description": "Home office equipment policy"
+    },
+    {
+      "query": "How many sick days am I entitled to?",
+      "expected_doc_ids": ["pol_sick_leave"],
+      "expected_sections": ["Entitlement"],
+      "tags": ["factual", "leave", "CH"],
+      "description": "Sick leave entitlement"
+    },
+    {
+      "query": "What's the process for submitting expense reports?",
+      "expected_doc_ids": ["pol_expense"],
+      "expected_sections": ["Submission Process"],
+      "tags": ["procedural", "expenses"],
+      "description": "Expense submission process"
+    },
+    {
+      "query": "Can I work remotely from another country?",
+      "expected_doc_ids": ["pol_wfh", "pol_remote_work"],
+      "expected_sections": ["International", "Remote Work"],
+      "tags": ["conceptual", "WFH"],
+      "description": "International remote work policy"
+    },
+    {
+      "query": "What's the company holiday schedule?",
+      "expected_doc_ids": ["pol_holidays"],
+      "expected_sections": ["Holiday Calendar"],
+      "tags": ["factual", "leave"],
+      "description": "Company holiday information"
+    },
+    {
+      "query": "How do I report harassment or discrimination?",
+      "expected_doc_ids": ["pol_conduct", "pol_hr_policies"],
+      "expected_sections": ["Reporting", "Complaints"],
+      "tags": ["procedural", "conduct"],
+      "description": "Harassment reporting process"
+    }
+  ]
+}

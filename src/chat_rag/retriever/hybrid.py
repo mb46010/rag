@@ -1,173 +1,425 @@
+"""
+Enhanced Hybrid Retriever with:
+- Query-adaptive alpha
+- Calibrated reranking
+- RRF fusion option
+- Confidence scoring
+- Batch context fetching
+"""
+
 import logging
-import weaviate
 from typing import List, Dict, Any, Optional
-from weaviate.classes.query import MetadataQuery
-from llama_index.core import VectorStoreIndex
-from llama_index.vector_stores.weaviate import WeaviateVectorStore
-from llama_index.core.schema import NodeWithScore, TextNode
+import numpy as np
+import weaviate
+from weaviate.classes.query import MetadataQuery, Filter
 from llama_index.embeddings.openai import OpenAIEmbedding
+from sentence_transformers import CrossEncoder
 
-from .models import PolicyChunk
-from .reranker import Reranker
-
-
-from langfuse import observe
+from .models import PolicyChunk, QueryType, RetrievalResult
+from .config import RetrievalConfig
 
 logger = logging.getLogger(__name__)
 
 
-class HybridRetriever:
+class EnhancedHybridRetriever:
     """
-    Hybrid retriever using Weaviate and LlamaIndex.
+    Production-grade hybrid retriever with adaptive behavior.
 
-    Performs hybrid search (BM25 + Vector) with strict metadata filtering.
+    Features:
+    - Query classification for optimal BM25/vector balance
+    - CrossEncoder reranking with calibrated confidence scores
+    - Optional Reciprocal Rank Fusion (RRF) for stable ranking
+    - Batch fetching of context windows
+    - Confidence-based filtering
     """
 
-    def __init__(
-        self,
-        weaviate_url: str = "http://localhost:8080",
-        collection_name: str = "PolicyChunk",
-        embedding_model: str = "text-embedding-3-large",
-        alpha: float = 0.5,
-        reranker_model: Optional[str] = None,
-    ):
-        """
-        Initialize the hybrid retriever.
-
-        Args:
-            weaviate_url: Weaviate server URL
-            collection_name: Weaviate collection name
-            embedding_model: OpenAI embedding model name
-            alpha: Hybrid search weight (0=BM25 only, 1=vector only, 0.5=balanced)
-        """
-        self.weaviate_url = weaviate_url
-        self.collection_name = collection_name
-        self.alpha = alpha
-        self.reranker = Reranker(model_name=reranker_model) if reranker_model else None
-
-        logger.info(f"Initializing HybridRetriever with collection: {collection_name}")
-        logger.info(f"Weaviate URL: {weaviate_url}, alpha: {alpha}")
+    def __init__(self, config: RetrievalConfig = None):
+        self.config = config or RetrievalConfig()
+        logger.info("Initializing EnhancedHybridRetriever")
 
         # Initialize Weaviate client
-        self.client = weaviate.connect_to_local(host=weaviate_url.replace("http://", "").split(":")[0])
+        host = self.config.weaviate_url.replace("http://", "").replace("https://", "").split(":")[0]
+        self.client = weaviate.connect_to_local(host=host)
 
         # Initialize embedding model
-        self.embed_model = OpenAIEmbedding(model=embedding_model)
-        logger.info(f"Using embedding model: {embedding_model}")
+        self.embed_model = OpenAIEmbedding(model=self.config.embedding_model)
+        logger.info(f"Using embedding model: {self.config.embedding_model}")
 
-        # Initialize vector store
-        self.vector_store = WeaviateVectorStore(weaviate_client=self.client, index_name=collection_name)
+        # Initialize reranker
+        if self.config.enable_reranking:
+            logger.info(f"Loading reranker: {self.config.reranker_model}")
+            self.reranker = CrossEncoder(self.config.reranker_model, device="cpu")
+        else:
+            self.reranker = None
 
-    @observe(as_type="retriever")
+        # Initialize query classification patterns
+        self._init_query_patterns()
+
+    def _init_query_patterns(self):
+        """Initialize keyword patterns for query classification."""
+        self.factual_keywords = {
+            "how many",
+            "what is the",
+            "how much",
+            "when",
+            "where",
+            "limit",
+            "maximum",
+            "minimum",
+            "deadline",
+            "amount",
+            "number of",
+            "rate",
+            "percentage",
+            "days",
+            "hours",
+        }
+        self.procedural_keywords = {
+            "how do i",
+            "how to",
+            "steps",
+            "process",
+            "procedure",
+            "submit",
+            "request",
+            "apply",
+            "file",
+            "register",
+            "enroll",
+            "claim",
+        }
+
+    def classify_query(self, query: str) -> QueryType:
+        """
+        Classify query type for adaptive alpha selection.
+
+        Args:
+            query: The search query
+
+        Returns:
+            QueryType enum value
+        """
+        query_lower = query.lower()
+
+        if any(kw in query_lower for kw in self.factual_keywords):
+            return QueryType.FACTUAL
+        elif any(kw in query_lower for kw in self.procedural_keywords):
+            return QueryType.PROCEDURAL
+        else:
+            return QueryType.CONCEPTUAL
+
+    def get_adaptive_alpha(self, query_type: QueryType) -> float:
+        """
+        Get optimal alpha based on query type.
+
+        Args:
+            query_type: Classified query type
+
+        Returns:
+            Alpha value (0=BM25, 1=vector, 0.5=balanced)
+        """
+        alpha_map = {
+            QueryType.FACTUAL: self.config.alpha_factual,
+            QueryType.CONCEPTUAL: self.config.alpha_conceptual,
+            QueryType.PROCEDURAL: self.config.alpha_procedural,
+            QueryType.UNKNOWN: self.config.alpha_default,
+        }
+        return alpha_map.get(query_type, self.config.alpha_default)
+
     def retrieve(
         self,
         query: str,
-        top_k: int = 5,
+        top_k: int = None,
         filters: Optional[Dict[str, Any]] = None,
-        candidate_pool_size: int = 20,
-        include_context: bool = True,
+        override_alpha: Optional[float] = None,
     ) -> List[PolicyChunk]:
         """
-        Retrieve relevant policy chunks using hybrid search.
+        Retrieve relevant policy chunks.
 
         Args:
             query: Search query
-            top_k: Number of chunks to return
-            filters: Metadata filters (e.g., {"active": True, "country": "CH"})
-            candidate_pool_size: Size of candidate pool before reranking
-            include_context: Whether to include previous/next chunks
+            top_k: Number of results to return
+            filters: Metadata filters (e.g., {"country": "CH"})
+            override_alpha: Override adaptive alpha selection
 
         Returns:
-            List of PolicyChunk objects with metadata and optional context
+            List of PolicyChunk objects with confidence scores
         """
-        logger.info(f"Retrieving chunks for query: '{query}'")
-        logger.info(f"Filters: {filters}, top_k: {top_k}")
+        top_k = top_k or self.config.default_top_k
 
         # Ensure active filter is always applied
-        if filters is None:
-            filters = {}
-        if "active" not in filters:
-            filters["active"] = True
-            logger.info("Adding default filter: active=True")
+        filters = filters.copy() if filters else {}
+        filters.setdefault("active", True)
+
+        # Classify query and determine alpha
+        query_type = self.classify_query(query)
+        alpha = override_alpha if override_alpha is not None else self.get_adaptive_alpha(query_type)
+
+        logger.info(f"Query: '{query[:50]}...' | Type: {query_type.value} | Alpha: {alpha}")
+
+        # Calculate candidate pool size
+        candidate_size = top_k * self.config.candidate_pool_multiplier
+
+        # Retrieve candidates
+        if self.config.enable_rrf:
+            chunks = self._retrieve_with_rrf(query, candidate_size, filters)
+        else:
+            chunks = self._retrieve_hybrid(query, candidate_size, filters, alpha)
+
+        if not chunks:
+            logger.warning("No results found")
+            return []
+
+        logger.info(f"Retrieved {len(chunks)} candidates")
+
+        # Rerank if enabled
+        if self.config.enable_reranking and self.reranker:
+            chunks = self._rerank_chunks(query, chunks, top_k)
+        else:
+            chunks = chunks[:top_k]
+
+        # Assign confidence levels
+        self._assign_confidence_levels(chunks)
+
+        # Fetch context windows if enabled
+        if self.config.enable_context_window:
+            self._batch_fetch_context(chunks)
+
+        # Add metadata for observability
+        for chunk in chunks:
+            chunk.query_type = query_type.value
+            chunk.alpha_used = alpha
+
+        # Filter low confidence (but keep at least one result)
+        confident_chunks = [c for c in chunks if c.confidence_level != "low"]
+        if not confident_chunks and chunks:
+            chunks[0].confidence_level = "low_but_best"
+            return [chunks[0]]
+
+        return confident_chunks
+
+    def retrieve_with_metadata(
+        self,
+        query: str,
+        top_k: int = None,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> RetrievalResult:
+        """
+        Retrieve with full metadata for observability.
+
+        Returns:
+            RetrievalResult with chunks and retrieval metadata
+        """
+        top_k = top_k or self.config.default_top_k
+        filters = filters.copy() if filters else {}
+        filters.setdefault("active", True)
+
+        query_type = self.classify_query(query)
+        alpha = self.get_adaptive_alpha(query_type)
+
+        candidate_size = top_k * self.config.candidate_pool_multiplier
+        chunks = self._retrieve_hybrid(query, candidate_size, filters, alpha)
+        total_candidates = len(chunks)
+
+        if self.config.enable_reranking and self.reranker:
+            chunks = self._rerank_chunks(query, chunks, top_k)
+        else:
+            chunks = chunks[:top_k]
+
+        self._assign_confidence_levels(chunks)
+
+        if self.config.enable_context_window:
+            self._batch_fetch_context(chunks)
+
+        return RetrievalResult(
+            chunks=chunks,
+            query=query,
+            query_type=query_type,
+            alpha_used=alpha,
+            total_candidates=total_candidates,
+            filters_applied=filters,
+        )
+
+    def _retrieve_hybrid(
+        self, query: str, limit: int, filters: Dict[str, Any], alpha: float
+    ) -> List[PolicyChunk]:
+        """Standard Weaviate hybrid search."""
+        collection = self.client.collections.get(self.config.collection_name)
+        weaviate_filters = self._build_filters(filters)
+
+        # Generate query embedding
+        query_embedding = self.embed_model.get_query_embedding(query)
+
+        response = collection.query.hybrid(
+            query=query,
+            vector=query_embedding,
+            alpha=alpha,
+            limit=limit,
+            filters=weaviate_filters,
+            return_metadata=MetadataQuery(score=True),
+        )
+
+        return [self._to_policy_chunk(obj) for obj in response.objects]
+
+    def _retrieve_with_rrf(
+        self, query: str, limit: int, filters: Dict[str, Any]
+    ) -> List[PolicyChunk]:
+        """
+        Reciprocal Rank Fusion: run BM25 and vector separately, then fuse.
+
+        RRF provides more stable ranking than score-based fusion because it
+        only considers rank positions, not raw scores which have different
+        distributions.
+        """
+        collection = self.client.collections.get(self.config.collection_name)
+        weaviate_filters = self._build_filters(filters)
+        query_embedding = self.embed_model.get_query_embedding(query)
+
+        k = self.config.rrf_k
+
+        # BM25 search
+        bm25_response = collection.query.bm25(
+            query=query,
+            limit=limit,
+            filters=weaviate_filters,
+        )
+
+        # Vector search
+        vector_response = collection.query.near_vector(
+            near_vector=query_embedding,
+            limit=limit,
+            filters=weaviate_filters,
+        )
+
+        # Build RRF scores
+        scores: Dict[str, float] = {}
+        chunk_map: Dict[str, PolicyChunk] = {}
+
+        for rank, obj in enumerate(bm25_response.objects):
+            chunk_id = obj.properties.get("chunk_id")
+            scores[chunk_id] = scores.get(chunk_id, 0) + 1 / (k + rank + 1)
+            chunk = self._to_policy_chunk(obj)
+            chunk.bm25_rank = rank
+            chunk_map[chunk_id] = chunk
+
+        for rank, obj in enumerate(vector_response.objects):
+            chunk_id = obj.properties.get("chunk_id")
+            scores[chunk_id] = scores.get(chunk_id, 0) + 1 / (k + rank + 1)
+            if chunk_id not in chunk_map:
+                chunk = self._to_policy_chunk(obj)
+                chunk_map[chunk_id] = chunk
+            chunk_map[chunk_id].vector_rank = rank
+
+        # Sort by RRF score
+        sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+
+        result = []
+        for chunk_id in sorted_ids[:limit]:
+            chunk = chunk_map[chunk_id]
+            chunk.score = scores[chunk_id]
+            result.append(chunk)
+
+        return result
+
+    def _rerank_chunks(
+        self, query: str, chunks: List[PolicyChunk], top_k: int
+    ) -> List[PolicyChunk]:
+        """
+        Rerank using CrossEncoder with calibrated scores.
+
+        Uses sigmoid calibration to convert raw CrossEncoder scores
+        to interpretable confidence scores between 0 and 1.
+        """
+        if not chunks:
+            return []
+
+        pairs = [[query, chunk.text] for chunk in chunks]
+        raw_scores = self.reranker.predict(pairs)
+
+        # Sigmoid calibration for interpretable scores
+        calibrated = 1 / (1 + np.exp(-raw_scores))
+
+        for chunk, raw, cal in zip(chunks, raw_scores, calibrated):
+            chunk.rerank_score = float(cal)
+            chunk.score = float(cal)  # Override hybrid score with calibrated score
+
+        chunks.sort(key=lambda x: x.score, reverse=True)
+        return chunks[:top_k]
+
+    def _assign_confidence_levels(self, chunks: List[PolicyChunk]):
+        """Assign human-readable confidence levels based on scores."""
+        for chunk in chunks:
+            if chunk.score >= self.config.high_confidence_threshold:
+                chunk.confidence_level = "high"
+            elif chunk.score >= self.config.medium_confidence_threshold:
+                chunk.confidence_level = "medium"
+            else:
+                chunk.confidence_level = "low"
+
+    def _batch_fetch_context(self, chunks: List[PolicyChunk]):
+        """
+        Fetch adjacent chunks in a single batch query.
+
+        This avoids the N+1 query problem where each chunk triggers
+        separate queries for previous/next context.
+        """
+        if not chunks:
+            return
+
+        # Build list of adjacent indices to fetch
+        adjacent_requests = []
+        for chunk in chunks:
+            if chunk.chunk_index > 0:
+                adjacent_requests.append((chunk.document_id, chunk.chunk_index - 1))
+            adjacent_requests.append((chunk.document_id, chunk.chunk_index + 1))
+
+        if not adjacent_requests:
+            return
+
+        # Build OR filter for all adjacent chunks
+        collection = self.client.collections.get(self.config.collection_name)
+
+        filter_expr = None
+        for doc_id, idx in adjacent_requests:
+            f = Filter.by_property("document_id").equal(doc_id) & Filter.by_property("chunk_index").equal(idx)
+            filter_expr = f if filter_expr is None else (filter_expr | f)
 
         try:
-            # Get collection
-            collection = self.client.collections.get(self.collection_name)
+            response = collection.query.fetch_objects(filters=filter_expr, limit=len(adjacent_requests))
 
-            # Build Weaviate filters
-            weaviate_filters = self._build_weaviate_filters(filters)
-
-            # Generate query embedding
-            query_embedding = self.embed_model.get_query_embedding(query)
-
-            # Perform hybrid search
-            logger.info(f"Performing hybrid search with alpha={self.alpha}")
-            response = collection.query.hybrid(
-                query=query,
-                vector=query_embedding,
-                alpha=self.alpha,
-                limit=candidate_pool_size,
-                filters=weaviate_filters,
-                return_metadata=MetadataQuery(score=True),
-            )
-
-            logger.info(f"Found {len(response.objects)} candidates")
-
-            if not response.objects:
-                logger.warning("No results found. Consider relaxing filters or checking data.")
-                return []
-
-            # Convert to PolicyChunk objects
-            chunks = []
-            # Fetch `candidate_pool_size` candidates initially if reranking is enabled,
-            # otherwise just fetch `top_k` (though we already limited to candidate_pool_size above).
-            # The query above uses limit=candidate_pool_size.
-            # So response.objects contains up to candidate_pool_size items.
-
+            # Build lookup map
+            context_map = {}
             for obj in response.objects:
-                chunk = self._convert_to_policy_chunk(obj, include_context)
-                chunks.append(chunk)
+                key = (obj.properties["document_id"], obj.properties["chunk_index"])
+                context_map[key] = obj.properties["text"]
 
-            if self.reranker:
-                logger.info("Reranking candidates...")
-                chunks = self.reranker.rerank(query, chunks, top_k=top_k)
-            else:
-                chunks = chunks[:top_k]
-
-            logger.info(f"Returning {len(chunks)} chunks")
-            return chunks
+            # Assign to chunks
+            for chunk in chunks:
+                chunk.previous_chunk = context_map.get((chunk.document_id, chunk.chunk_index - 1))
+                chunk.next_chunk = context_map.get((chunk.document_id, chunk.chunk_index + 1))
 
         except Exception as e:
-            logger.error(f"Error during retrieval: {e}")
-            raise
+            logger.warning(f"Batch context fetch failed: {e}")
 
-    def _build_weaviate_filters(self, filters: Dict[str, Any]) -> Optional[Any]:
-        """Build Weaviate filter from dict."""
+    def _build_filters(self, filters: Dict[str, Any]) -> Optional[Filter]:
+        """Build Weaviate filter from dictionary."""
         if not filters:
             return None
 
-        logger.info(f"Building Weaviate filters from: {filters}")
-
-        from weaviate.classes.query import Filter
-
-        filter_conditions = []
+        conditions = []
         for key, value in filters.items():
-            filter_conditions.append(Filter.by_property(key).equal(value))
+            conditions.append(Filter.by_property(key).equal(value))
 
-        # Combine filters with AND
-        if len(filter_conditions) == 1:
-            return filter_conditions[0]
-        else:
-            result = filter_conditions[0]
-            for condition in filter_conditions[1:]:
-                result = result & condition
-            return result
+        result = conditions[0]
+        for condition in conditions[1:]:
+            result = result & condition
 
-    def _convert_to_policy_chunk(self, obj: Any, include_context: bool) -> PolicyChunk:
+        return result
+
+    def _to_policy_chunk(self, obj) -> PolicyChunk:
         """Convert Weaviate object to PolicyChunk."""
         props = obj.properties
-
-        chunk = PolicyChunk(
+        return PolicyChunk(
             text=props.get("text", ""),
             document_id=props.get("document_id", ""),
             document_name=props.get("document_name", ""),
@@ -178,42 +430,15 @@ class HybridRetriever:
             country=props.get("country", ""),
             active=props.get("active", True),
             last_modified=props.get("last_modified", ""),
-            score=obj.metadata.score if hasattr(obj.metadata, "score") else 0.0,
+            score=obj.metadata.score if hasattr(obj.metadata, "score") and obj.metadata.score else 0.0,
         )
-
-        # Get context chunks if requested
-        if include_context:
-            chunk.previous_chunk = self._get_adjacent_chunk(props.get("document_id"), props.get("chunk_index", 0) - 1)
-            chunk.next_chunk = self._get_adjacent_chunk(props.get("document_id"), props.get("chunk_index", 0) + 1)
-
-        return chunk
-
-    def _get_adjacent_chunk(self, document_id: str, chunk_index: int) -> Optional[str]:
-        """Get adjacent chunk text by document_id and chunk_index."""
-        if chunk_index < 0:
-            return None
-
-        try:
-            from weaviate.classes.query import Filter
-
-            collection = self.client.collections.get(self.collection_name)
-            response = collection.query.fetch_objects(
-                filters=(
-                    Filter.by_property("document_id").equal(document_id)
-                    & Filter.by_property("chunk_index").equal(chunk_index)
-                ),
-                limit=1,
-            )
-
-            if response.objects:
-                return response.objects[0].properties.get("text", "")
-            return None
-        except Exception as e:
-            logger.warning(f"Could not fetch adjacent chunk: {e}")
-            return None
 
     def close(self):
         """Close Weaviate client connection."""
         if self.client:
             self.client.close()
             logger.info("Weaviate client closed")
+
+
+# Backwards compatibility alias
+HybridRetriever = EnhancedHybridRetriever
