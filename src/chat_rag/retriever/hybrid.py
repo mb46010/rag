@@ -175,7 +175,7 @@ class EnhancedHybridRetriever:
         # Rerank if enabled
         if self.config.enable_reranking and self.reranker:
             chunks = self._rerank_chunks(query, chunks, top_k)
-            logger.info(f"After reranking (top_k={top_k}): {len(chunks)} chunks kept")
+            logger.info(f"After reranking (CrossEncoder) (top_k={top_k}): {len(chunks)} chunks kept")
         else:
             chunks = chunks[:top_k]
             logger.info(f"No reranking (top_k={top_k}): {len(chunks)} chunks kept")
