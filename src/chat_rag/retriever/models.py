@@ -52,6 +52,10 @@ class PolicyChunk:
     # For debugging/observability
     query_type: Optional[str] = None
     alpha_used: Optional[float] = None
+    
+    # HyDE metadata
+    hyde_enhanced: bool = False
+    hypothetical_used: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization."""
@@ -66,6 +70,7 @@ class PolicyChunk:
             "country": self.country,
             "score": self.score,
             "confidence_level": self.confidence_level,
+            "hyde_enhanced": self.hyde_enhanced,
         }
 
 
