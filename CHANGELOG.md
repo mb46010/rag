@@ -2,7 +2,7 @@
 
 All notable changes to the HR Assistant Chatbot are documented here.
 
-## [2.0.0] - 2024-XX-XX
+## [2.0.0] - 2025-31-12
 
 ### Added
 

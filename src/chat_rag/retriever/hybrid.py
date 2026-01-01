@@ -22,8 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class EnhancedHybridRetriever:
-    """
-    Production-grade hybrid retriever with adaptive behavior.
+    """Production-grade hybrid retriever with adaptive behavior.
 
     Features:
     - Query classification for optimal BM25/vector balance
@@ -133,8 +132,7 @@ class EnhancedHybridRetriever:
         filters: Optional[Dict[str, Any]] = None,
         override_alpha: Optional[float] = None,
     ) -> List[PolicyChunk]:
-        """
-        Retrieve relevant policy chunks.
+        """Retrieve relevant policy chunks.
 
         Args:
             query: Search query
@@ -204,8 +202,7 @@ class EnhancedHybridRetriever:
         top_k: int = None,
         filters: Optional[Dict[str, Any]] = None,
     ) -> RetrievalResult:
-        """
-        Retrieve with full metadata for observability.
+        """Retrieve with full metadata for observability.
 
         Returns:
             RetrievalResult with chunks and retrieval metadata
@@ -240,9 +237,7 @@ class EnhancedHybridRetriever:
             filters_applied=filters,
         )
 
-    def _retrieve_hybrid(
-        self, query: str, limit: int, filters: Dict[str, Any], alpha: float
-    ) -> List[PolicyChunk]:
+    def _retrieve_hybrid(self, query: str, limit: int, filters: Dict[str, Any], alpha: float) -> List[PolicyChunk]:
         """Standard Weaviate hybrid search."""
         collection = self.client.collections.get(self.config.collection_name)
         weaviate_filters = self._build_filters(filters)
@@ -261,11 +256,8 @@ class EnhancedHybridRetriever:
 
         return [self._to_policy_chunk(obj) for obj in response.objects]
 
-    def _retrieve_with_rrf(
-        self, query: str, limit: int, filters: Dict[str, Any]
-    ) -> List[PolicyChunk]:
-        """
-        Reciprocal Rank Fusion: run BM25 and vector separately, then fuse.
+    def _retrieve_with_rrf(self, query: str, limit: int, filters: Dict[str, Any]) -> List[PolicyChunk]:
+        """Reciprocal Rank Fusion: run BM25 and vector separately, then fuse.
 
         RRF provides more stable ranking than score-based fusion because it
         only considers rank positions, not raw scores which have different
@@ -321,11 +313,8 @@ class EnhancedHybridRetriever:
 
         return result
 
-    def _rerank_chunks(
-        self, query: str, chunks: List[PolicyChunk], top_k: int
-    ) -> List[PolicyChunk]:
-        """
-        Rerank using CrossEncoder with calibrated scores.
+    def _rerank_chunks(self, query: str, chunks: List[PolicyChunk], top_k: int) -> List[PolicyChunk]:
+        """Rerank using CrossEncoder with calibrated scores.
 
         Uses sigmoid calibration to convert raw CrossEncoder scores
         to interpretable confidence scores between 0 and 1.
@@ -357,8 +346,7 @@ class EnhancedHybridRetriever:
                 chunk.confidence_level = "low"
 
     def _batch_fetch_context(self, chunks: List[PolicyChunk]):
-        """
-        Fetch adjacent chunks in a single batch query.
+        """Fetch adjacent chunks in a single batch query.
 
         This avoids the N+1 query problem where each chunk triggers
         separate queries for previous/next context.
