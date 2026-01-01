@@ -50,7 +50,9 @@ Query: "{query}"
 
 Categories:
 - "policy_only": General policy questions that don't need personal employee data
-  Examples: "What's the WFH policy?", "How do expense reports work?"
+  Be careful: policies are country-specific, choose "policy_only" only if the user specifies for which country the policy is asked.
+  Otherwise, choose "hybrid" to retrieve specificpolicies for the user's country.  
+  Examples: "What's the WFH policy in Italy?", "How do expense reports work in Switzerland?"
 
 - "personal_only": Questions about the user's specific data
   Examples: "How many PTO days do I have?", "What's my job title?"
