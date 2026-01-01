@@ -38,3 +38,7 @@ class RetrievalConfig:
 
     # RRF parameter
     rrf_k: int = 60  # Standard RRF constant
+
+    # Debugging
+    debug_to_file: bool = False
+    retrieval_output_dir: str = "output/retrieval"
