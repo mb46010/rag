@@ -284,6 +284,10 @@ class EnhancedHRWorkflowAgent:
                 def __exit__(self, *args):
                     pass
 
+            # Track accumulated outputs
+            final_response_acc = None
+            highlighted_sources_acc = None
+
             context = metrics_context or DummyMetrics()
 
             with context as metrics:
@@ -292,6 +296,12 @@ class EnhancedHRWorkflowAgent:
                 ):
                     node_name = list(event.keys())[0]
                     node_output = event[node_name] or {}
+
+                    # Accumulate outputs if present
+                    if "final_response" in node_output:
+                        final_response_acc = node_output["final_response"]
+                    if "highlighted_sources" in node_output:
+                        highlighted_sources_acc = node_output["highlighted_sources"]
 
                     if node_name == "gather_data" and not isinstance(metrics, DummyMetrics):
                         metrics.hyde_used = node_output.get("hyde_used", False)
@@ -306,11 +316,16 @@ class EnhancedHRWorkflowAgent:
         except Exception as e:
             logger.error(f"astream error: {e}", exc_info=True)
             node_output = {"error": str(e), "final_response": f"Error: {str(e)}"}
+            final_response_acc = node_output["final_response"]
 
         # Final response
-        final_response = node_output.get("final_response", "Unable to generate response.")
-        if node_output.get("highlighted_sources"):
-            final_response += node_output["highlighted_sources"]
+        final_response = final_response_acc or node_output.get("final_response", "Unable to generate response.")
+
+        # Append highlighted sources if available
+        # Note: Use the accumulated valid sources, or check node_output if it was the last step
+        sources_to_append = highlighted_sources_acc or node_output.get("highlighted_sources")
+        if sources_to_append:
+            final_response += sources_to_append
 
         yield {"type": "complete", "response": final_response}
 

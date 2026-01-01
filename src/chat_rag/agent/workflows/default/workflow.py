@@ -249,11 +249,19 @@ class HRWorkflowAgent:
         # Initialize Langfuse handler
         langfuse_handler = CallbackHandler()
 
+        # Track accumulated final response
+        final_response_acc = None
+        node_output = {}
+
         async for event in self.graph.astream(
             initial_state, stream_mode="updates", config={"callbacks": [langfuse_handler]}
         ):
             node_name = list(event.keys())[0]
             node_output = event[node_name]
+
+            # Accumulate final_response if present
+            if node_output and "final_response" in node_output:
+                final_response_acc = node_output["final_response"]
 
             yield {
                 "type": "progress",
@@ -263,13 +271,9 @@ class HRWorkflowAgent:
             }
 
         # Final response
-        # Note: the last event yielded might not contain the final response if we loop,
-        # but in this DAG it should be fine. We can check the node_output of the last step.
-        # But 'node_output' is from the loop which is local scope? No, Python scoping in loops...
-        # Wait, 'node_output' will hold the value of the last iteration.
-
-        if "final_response" in node_output:
-            yield {"type": "complete", "response": node_output["final_response"]}
+        final_response = final_response_acc or node_output.get("final_response")
+        if final_response:
+            yield {"type": "complete", "response": final_response}
 
     def _format_intermediate_steps(self, state: AgentState) -> List[Dict]:
         """Format state into intermediate steps for compatibility."""
