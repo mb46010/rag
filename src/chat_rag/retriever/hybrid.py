@@ -1,5 +1,6 @@
-"""
-Enhanced Hybrid Retriever with:
+"""Enhanced Hybrid Retriever with adaptive behavior and fused ranking.
+
+Features:
 - Query-adaptive alpha
 - Calibrated reranking
 - RRF fusion option
@@ -39,6 +40,11 @@ class EnhancedHybridRetriever:
     """
 
     def __init__(self, config: RetrievalConfig = None):
+        """Initialize the EnhancedHybridRetriever.
+
+        Args:
+            config: Retrieval configuration object
+        """
         self.config = config or RetrievalConfig()
         logger.info("Initializing EnhancedHybridRetriever")
 
@@ -100,8 +106,7 @@ class EnhancedHybridRetriever:
         }
 
     def classify_query(self, query: str) -> QueryType:
-        """
-        Classify query type for adaptive alpha selection.
+        """Classify query type for adaptive alpha selection.
 
         Args:
             query: The search query
@@ -119,8 +124,7 @@ class EnhancedHybridRetriever:
             return QueryType.CONCEPTUAL
 
     def get_adaptive_alpha(self, query_type: QueryType) -> float:
-        """
-        Get optimal alpha based on query type.
+        """Get optimal alpha based on query type.
 
         Args:
             query_type: Classified query type
@@ -471,12 +475,20 @@ class EnhancedHybridRetriever:
             context_map = {}
             for obj in response.objects:
                 key = (obj.properties["document_id"], obj.properties["chunk_index"])
-                context_map[key] = obj.properties["text"]
+                context_map[key] = {"text": obj.properties["text"], "chunk_id": obj.properties.get("chunk_id")}
 
             # Assign to chunks
             for chunk in chunks:
-                chunk.previous_chunk = context_map.get((chunk.document_id, chunk.chunk_index - 1))
-                chunk.next_chunk = context_map.get((chunk.document_id, chunk.chunk_index + 1))
+                prev_data = context_map.get((chunk.document_id, chunk.chunk_index - 1))
+                next_data = context_map.get((chunk.document_id, chunk.chunk_index + 1))
+
+                if prev_data:
+                    chunk.previous_chunk = prev_data["text"]
+                    chunk.previous_chunk_id = prev_data["chunk_id"]
+
+                if next_data:
+                    chunk.next_chunk = next_data["text"]
+                    chunk.next_chunk_id = next_data["chunk_id"]
 
         except Exception as e:
             logger.warning(f"Batch context fetch failed: {e}")
@@ -504,6 +516,7 @@ class EnhancedHybridRetriever:
             document_id=props.get("document_id", ""),
             document_name=props.get("document_name", ""),
             section_path_str=props.get("section_path_str", ""),
+            section_path=props.get("section_path", []) or [props.get("section_path_str", "")],
             chunk_id=props.get("chunk_id", ""),
             chunk_index=props.get("chunk_index", 0),
             topic=props.get("topic", ""),

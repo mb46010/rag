@@ -31,6 +31,7 @@ class PolicyChunk:
     document_id: str
     document_name: str
     section_path_str: str
+    section_path: List[str]
     chunk_id: str
     chunk_index: int
     topic: str
@@ -42,6 +43,8 @@ class PolicyChunk:
     # Context window
     previous_chunk: Optional[str] = None
     next_chunk: Optional[str] = None
+    previous_chunk_id: Optional[str] = None
+    next_chunk_id: Optional[str] = None
 
     # Enhanced metadata
     confidence_level: str = "unknown"
@@ -52,7 +55,7 @@ class PolicyChunk:
     # For debugging/observability
     query_type: Optional[str] = None
     alpha_used: Optional[float] = None
-    
+
     # HyDE metadata
     hyde_enhanced: bool = False
     hypothetical_used: Optional[str] = None
@@ -64,13 +67,24 @@ class PolicyChunk:
             "document_id": self.document_id,
             "document_name": self.document_name,
             "section_path_str": self.section_path_str,
+            "section_path": self.section_path,
             "chunk_id": self.chunk_id,
             "chunk_index": self.chunk_index,
             "topic": self.topic,
             "country": self.country,
             "score": self.score,
+            "previous_chunk": self.previous_chunk,
+            "next_chunk": self.next_chunk,
+            "previous_chunk_id": self.previous_chunk_id,
+            "next_chunk_id": self.next_chunk_id,
             "confidence_level": self.confidence_level,
+            "rerank_score": self.rerank_score,
+            "bm25_rank": self.bm25_rank,
+            "vector_rank": self.vector_rank,
+            "query_type": self.query_type,
+            "alpha_used": self.alpha_used,
             "hyde_enhanced": self.hyde_enhanced,
+            "hypothetical_used": self.hypothetical_used,
         }
 
 

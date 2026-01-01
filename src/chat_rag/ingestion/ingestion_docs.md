@@ -44,10 +44,14 @@ The pipeline uses the **Strategy Pattern** to define how documents are processed
 
 ### Pipeline Logic (`pipeline.py`)
 **`IngestionPipeline`** orchestrates the flow:
-1. **Load**: Reads JSON files from the `documents` directory.
+1. **Load**: Reads JSON metadata from `documents/`. Can optionally read content from an external markdown file if `markdown_file` matches.
 2. **Policy Selection**: Instantiates the requested policy (default or qa_extractor).
 3. **Processing**: Delegates content processing to the policy to produce `PolicyChunks`.
-4. **Contract Generation**: Saves a local JSON file (`output/{filename}_chunks_{policy}.json`) containing the full ingestion metadata and list of chunks. This serves as an audit trail or "contract".
+4. **Contract Generation**: Saves a local JSON file (`output/{filename}_chunks_{policy}.json`). This includes:
+    - **Ingestion Metadata**: Pipeline version, date.
+    - **Document Metadata**: Original file attributes.
+    - **Chunk Statistics**: Detailed stats on counts, lengths, and section structure.
+    - **Chunks**: The processed PolicyChunk objects.
 5. **Ingest**: Delegates to `WeaviateStorage` to save the chunks.
 
 ## 4. Usage
