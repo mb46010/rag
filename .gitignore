@@ -81,3 +81,5 @@ scripts/demo/output/*
 output.json
 scripts/debug/*
 output/*
+output_test_smart/*
+output_old/*

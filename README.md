@@ -25,12 +25,12 @@ AI assistant that answers HR policy questions using RAG (Retrieval-Augmented Gen
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        User Query                                │
+│                        User Query                               │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Intent Classification                         │
+│                    Intent Classification                        │
 │         (policy_only / personal_only / hybrid / chitchat)       │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -50,8 +50,8 @@ AI assistant that answers HR policy questions using RAG (Retrieval-Augmented Gen
           └────────────────┼──────────────────┘
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Response Synthesis                            │
-│              (with citations and confidence)                     │
+│                    Response Synthesis                           │
+│              (with citations and confidence)                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 

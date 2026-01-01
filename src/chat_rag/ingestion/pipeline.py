@@ -150,6 +150,12 @@ class IngestionPipeline:
         """Save ingestion contract to JSON file."""
         metadata = document["metadata"]
 
+        # Convert config to dict and handle Path objects
+        config_dict = asdict(self.config)
+        for k, v in config_dict.items():
+            if isinstance(v, Path):
+                config_dict[k] = str(v)
+
         contract = {
             "ingestion_metadata": {
                 "pipeline_name": self.policy.get_name(),
@@ -157,6 +163,7 @@ class IngestionPipeline:
                 "ingestion_date": datetime.datetime.now().isoformat(),
                 "source_file": file_path.name,
             },
+            "ingestion_config": config_dict,
             "document_metadata": metadata,
             "chunk_statistics": self._calculate_statistics(chunks),
             "chunks": [asdict(chunk) for chunk in chunks],

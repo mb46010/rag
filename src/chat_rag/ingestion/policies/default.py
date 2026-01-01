@@ -39,8 +39,20 @@ class DefaultIngestionPolicy(IngestionPolicy):
 
         document_id = generate_document_id(content)
 
+        # Parse minimum_split_level from config
+        # Expecting "HeaderX" or just "X", or default to 6
+        min_split_level_str = getattr(self.config, "minimum_split_level", "Header6")
+        try:
+            if "Header" in min_split_level_str:
+                min_split_level = int(min_split_level_str.replace("Header", ""))
+            else:
+                min_split_level = int(min_split_level_str)
+        except ValueError:
+            logger.warning(f"Invalid minimum_split_level '{min_split_level_str}', defaulting to 6")
+            min_split_level = 6
+
         # Split content by sections
-        sections = split_by_headers(content)
+        sections = split_by_headers(content, min_level=min_split_level)
 
         chunks = []
         for section_path, section_text in sections:

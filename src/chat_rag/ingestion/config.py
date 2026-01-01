@@ -15,3 +15,4 @@ class IngestionConfig:
     output_dir: Path = Path("./output")
     llm_model: str = "gpt-3.5-turbo"
     questions_to_generate: int = 3
+    minimum_split_level: str = "Header6"  # Default to splitting on all headers (up to h6)

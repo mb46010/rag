@@ -4,11 +4,10 @@ from typing import List, Tuple, Dict, Any
 from .models import PolicyChunk
 
 
-def split_by_headers(content: str) -> List[Tuple[List[str], str]]:
+def split_by_headers(content: str, min_level: int = 6) -> List[Tuple[List[str], str]]:
     """
     Split markdown content by headers and create section paths.
-
-    Returns list of (section_path, text) tuples.
+    Only splits if the header level is <= min_level.
     """
     sections = []
     current_path = []
@@ -20,19 +19,28 @@ def split_by_headers(content: str) -> List[Tuple[List[str], str]]:
         header_match = re.match(r"^(#{1,6})\s+(.+)$", line)
 
         if header_match:
-            # Save previous section
-            if current_text and current_path:
-                text = "\n".join(current_text).strip()
-                if text:
-                    sections.append((current_path.copy(), text))
-                current_text = []
-
-            # Update path
             level = len(header_match.group(1))
-            header_text = header_match.group(2).strip()
 
-            # Adjust path based on header level
-            current_path = current_path[: level - 1] + [header_text]
+            if level <= min_level:
+                # meaningful split point
+                # Save previous section
+                if current_text and current_path:
+                    text = "\n".join(current_text).strip()
+                    if text:
+                        sections.append((current_path.copy(), text))
+                    current_text = []
+
+                header_text = header_match.group(2).strip()
+
+                # Adjust path based on header level
+                # If we skipped some levels (e.g. current path is H1, and now we see H2),
+                # We just append.
+                # But if we go back up (e.g. at H3, see H2), we trunk.
+                # Standard markdown logic:
+                current_path = current_path[: level - 1] + [header_text]
+            else:
+                # Treat as normal text because it's too deep
+                current_text.append(line)
         else:
             current_text.append(line)
 
