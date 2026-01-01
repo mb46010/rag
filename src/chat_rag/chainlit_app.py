@@ -57,6 +57,8 @@ async def on_chat_start():
             enable_reranking=True,
             enable_context_window=True,
             enable_rrf=False,  # Use standard hybrid search
+            debug_to_file=True,
+            retrieval_output_dir="output/retrieval",
         )
         retriever = EnhancedHybridRetriever(retriever_config)
 
@@ -123,9 +125,7 @@ async def on_settings_update(settings):
     try:
         retriever = cl.user_session.get("retriever")
         if not retriever:
-            retriever = EnhancedHybridRetriever(
-                RetrievalConfig(enable_reranking=True)
-            )
+            retriever = EnhancedHybridRetriever(RetrievalConfig(enable_reranking=True))
             cl.user_session.set("retriever", retriever)
 
         agent = HRWorkflowAgent(
@@ -148,9 +148,7 @@ async def on_message(message: cl.Message):
     agent: Optional[HRWorkflowAgent] = cl.user_session.get("agent")
 
     if not agent:
-        await cl.Message(
-            content="Agent not initialized. Please refresh the page."
-        ).send()
+        await cl.Message(content="Agent not initialized. Please refresh the page.").send()
         return
 
     logger.info(f"Processing message from {user_email}: {message.content}")

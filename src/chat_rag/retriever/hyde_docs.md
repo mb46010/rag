@@ -68,3 +68,11 @@ To aid in debugging retrieval performance, both the `HyDERetriever` and the unde
 -   **Langfuse Tracing**:
     -   All major retrieval methods (`retrieve`, `_rerank_chunks`, `_generate_hypothetical`) are decorated with `@observe(as_type="generation")`.
     -   The retrieval visualization in Langfuse now shows the granular steps of fetching, reranking, and filtering, making it easier to pinpoint where recall loss occurs.
+
+-   **File-Based Debugging**:
+    -   You can enable `debug_to_file=True` in `RetrievalConfig`.
+    -   This outputs step-by-step JSON files to `output/retrieval/` showing the exact state of chunks (scores, metadata) at each stage:
+        1.  **Retrieval**: Initial candidate pool from Hybrid/RRF search.
+        2.  **Reranking**: Scores after CrossEncoder reranking.
+        3.  **Final**: Final filtered list returned to the agent.
+    -   Useful for inspecting exactly *why* a document was dropped (e.g., low confidence vs. reranker score).

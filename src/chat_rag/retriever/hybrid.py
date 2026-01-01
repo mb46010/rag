@@ -15,6 +15,11 @@ from weaviate.classes.query import MetadataQuery, Filter
 from llama_index.embeddings.openai import OpenAIEmbedding
 from sentence_transformers import CrossEncoder
 from langfuse import observe
+import json
+import os
+from datetime import datetime
+from dataclasses import asdict
+import uuid
 
 from .models import PolicyChunk, QueryType, RetrievalResult
 from .config import RetrievalConfig
@@ -54,6 +59,11 @@ class EnhancedHybridRetriever:
 
         # Initialize query classification patterns
         self._init_query_patterns()
+
+        # Ensure debug directory exists
+        if self.config.debug_to_file:
+            os.makedirs(self.config.retrieval_output_dir, exist_ok=True)
+            logger.info(f"Debug logging enabled. Output dir: {self.config.retrieval_output_dir}")
 
     def _init_query_patterns(self):
         """Initialize keyword patterns for query classification."""
@@ -126,6 +136,37 @@ class EnhancedHybridRetriever:
         }
         return alpha_map.get(query_type, self.config.alpha_default)
 
+    def _dump_debug_json(
+        self, request_id: str, step: str, query: str, chunks: List[PolicyChunk], metadata: Dict[str, Any] = None
+    ):
+        """Dump retrieval state to JSON file for debugging."""
+        if not self.config.debug_to_file:
+            return
+
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{timestamp}_{request_id}_{step}.json"
+            path = os.path.join(self.config.retrieval_output_dir, filename)
+
+            # Convert chunks to dicts
+            chunks_data = [asdict(c) for c in chunks]
+
+            data = {
+                "request_id": request_id,
+                "step": step,
+                "timestamp": datetime.now().isoformat(),
+                "query": query,
+                "metadata": metadata or {},
+                "chunk_count": len(chunks),
+                "chunks": chunks_data,
+            }
+
+            with open(path, "w") as f:
+                json.dump(data, f, indent=2, default=str)
+
+        except Exception as e:
+            logger.warning(f"Failed to dump debug JSON: {e}")
+
     @observe(as_type="generation")
     def retrieve(
         self,
@@ -146,6 +187,7 @@ class EnhancedHybridRetriever:
             List of PolicyChunk objects with confidence scores
         """
         top_k = top_k or self.config.default_top_k
+        request_id = str(uuid.uuid4())[:8]
 
         # Ensure active filter is always applied
         filters = filters.copy() if filters else {}
@@ -172,6 +214,18 @@ class EnhancedHybridRetriever:
 
         logger.info(f"Retrieved {len(chunks)} candidates via hybrid search")
 
+        self._dump_debug_json(
+            request_id,
+            "1_retrieval",
+            query,
+            chunks,
+            {
+                "method": "rrf" if self.config.enable_rrf else "hybrid",
+                "alpha": alpha,
+                "candidate_size": candidate_size,
+            },
+        )
+
         # Rerank if enabled
         if self.config.enable_reranking and self.reranker:
             chunks = self._rerank_chunks(query, chunks, top_k)
@@ -179,6 +233,14 @@ class EnhancedHybridRetriever:
         else:
             chunks = chunks[:top_k]
             logger.info(f"No reranking (top_k={top_k}): {len(chunks)} chunks kept")
+
+        self._dump_debug_json(
+            request_id,
+            "2_reranking",
+            query,
+            chunks,
+            {"reranking_enabled": bool(self.config.enable_reranking), "top_k": top_k},
+        )
 
         # Assign confidence levels
         self._assign_confidence_levels(chunks)
@@ -208,6 +270,14 @@ class EnhancedHybridRetriever:
 
         logger.info(
             f"Final output: {len(confident_chunks)} chunks (filtered {len(chunks) - len(confident_chunks)} low confidence)"
+        )
+
+        self._dump_debug_json(
+            request_id,
+            "3_final_output",
+            query,
+            confident_chunks,
+            {"filtered_count": len(chunks) - len(confident_chunks)},
         )
         return confident_chunks
 
