@@ -69,6 +69,8 @@ class RetrievalNode:
     def _format_chunk(self, chunk) -> Dict:
         return {
             "text": chunk.text,
+            "document_name": chunk.document_name,
+            "section_path_str": chunk.section_path_str,
             "source": f"{chunk.document_name} > {chunk.section_path_str}",
             "confidence": chunk.confidence_level,
             "score": chunk.score,

@@ -39,6 +39,8 @@ class RetrievalNode:
             policy_results = [
                 {
                     "text": c.text,
+                    "document_name": c.document_name,
+                    "section_path_str": c.section_path_str,
                     "source": f"{c.document_name} > {c.section_path_str}",
                     "confidence": c.confidence_level,
                     "score": c.score,

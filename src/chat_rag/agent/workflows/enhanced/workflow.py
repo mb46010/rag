@@ -148,69 +148,7 @@ class EnhancedHRWorkflowAgent:
         graph.add_node("handle_error", handle_error)
 
         # Define Edges
-        graph.add_edge(START, "resolve_context")
-        graph.add_edge("resolve_context", "fetch_profile")
-        graph.add_edge("fetch_profile", "check_ambiguity")
-
-        # Ambiguity Check
-        def check_ambiguity_route(state: AgentState):
-            if state.get("error"):
-                return "error"
-            if state.get("response", {}).get("needs_clarification"):
-                return "ask"
-            return "continue"
-
-        graph.add_conditional_edges(
-            "check_ambiguity",
-            check_ambiguity_route,
-            {"error": "handle_error", "ask": "ask_clarification", "continue": "classify_intent"},
-        )
-
-        graph.add_edge("ask_clarification", END)
-
-        # Intent Routing
-        def intent_route(state: AgentState):
-            if state.get("error"):
-                return "error"
-            intent = state.get("response", {}).get("intent", "hybrid")
-            if intent == "personal_only":
-                return "personal"
-            if intent == "policy_only":
-                return "policy"
-            return "hybrid"
-
-        graph.add_conditional_edges(
-            "classify_intent",
-            intent_route,
-            {
-                "error": "handle_error",
-                "personal": "fetch_pto",
-                "policy": "search_policies",
-                "hybrid": "fetch_pto",  # Fetch PTO then Policies (simulating hybrid)
-            },
-        )
-
-        # Data Gathering Paths
-        # Personal path: fetch_pto -> synthesize
-        graph.add_edge(
-            "fetch_pto", "search_policies"
-        )  # Simplified: always search policies if hybrid, or if routing says so.
-        # Wait, if intent is personal_only, we shouldn't search policies.
-        # I need to fix logic above.
-
-        # Let's use specific routing logic more carefully
-        # If personal: fetch_pto -> synthesize
-        # If policy: search_policies -> synthesize
-        # If hybrid: fetch_pto -> search_policies -> synthesize
-
-        # Revised Intent Routing:
-        # We need intermediate logic or carefully wired edges.
-        # graph.add_edge("fetch_pto", "synthesize") won't work if we want hybrid to go to search_policies.
-        # We can add a conditional edge after fetch_pto
-
-        pass
-        # I'll restart the edges definition below cleaner
-
+        # Edges are defined in _build_graph_edges to avoid duplication
         return self._build_graph_edges(graph)
 
     def _build_graph_edges(self, graph: StateGraph) -> Any:
@@ -370,6 +308,9 @@ class EnhancedHRWorkflowAgent:
                 # Handling accumulating state changes is tricky with nested state updates
                 # but 'node_output' contains only the update key.
                 # E.g. {"user": {...}} or {"final_response": "..."}
+
+                if not node_output:
+                    continue
 
                 if "final_response" in node_output:
                     final_response_acc = node_output["final_response"]

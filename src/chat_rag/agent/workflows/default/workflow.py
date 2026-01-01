@@ -244,6 +244,9 @@ class HRWorkflowAgent:
                 node_name = list(event.keys())[0]
                 node_output = event[node_name]
 
+                if not node_output:
+                    continue
+
                 if "final_response" in node_output:
                     final_response_acc = node_output["final_response"]
 
