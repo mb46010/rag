@@ -1,4 +1,27 @@
 {
     "version": "1.0.2",
-    "prompt": "Analyze this HR query for ambiguity. Determine if clarification is needed before answering.\n\nQuery: \"{query}\"\nUser's Profile Information: {country}\nConversation context: {context}\n\nIMPORTANT: Use the provided Profile Information (which may include country, role, tenure, etc.) to skip unnecessary questions. If the user's role/country is known, do NOT flag MISSING_CONTEXT or MISSING_COUNTRY for those fields.\n\nCheck for these ambiguity types:\n1. MISSING_COUNTRY - Query is country-specific but country unknown\n2. MISSING_CONTEXT - Needs personal info not available (e.g., \"Am I eligible?\" without knowing role/tenure)\n3. MULTIPLE_TOPICS - Query spans multiple distinct policy areas\n4. VAGUE_REFERENCE - Uses pronouns/references without antecedent\n5. TIME_AMBIGUOUS - Unclear time reference\n6. NONE - Query is clear enough to answer\n\nRespond in this exact format:\nAMBIGUITY_TYPE: <type>\nNEEDS_CLARIFICATION: <true/false>\nCLARIFYING_QUESTION: <question to ask, or \"none\">\nDETECTED_TOPICS: <comma-separated topics>\nCONFIDENCE: <0.0-1.0>"
+    "prompt": [
+        "Analyze this HR query for ambiguity. Determine if clarification is needed before answering.",
+        "",
+        "Query: \"{query}\"",
+        "User's Profile Information: {country}",
+        "Conversation context: {context}",
+        "",
+        "IMPORTANT: Use the provided Profile Information (which may include country, role, tenure, etc.) to skip unnecessary questions. If the user's role/country is known, do NOT flag MISSING_CONTEXT or MISSING_COUNTRY for those fields.",
+        "",
+        "Check for these ambiguity types:",
+        "1. MISSING_COUNTRY - Query is country-specific but country unknown",
+        "2. MISSING_CONTEXT - Needs personal info not available (e.g., \"Am I eligible?\" without knowing role/tenure)",
+        "3. MULTIPLE_TOPICS - Query spans multiple distinct policy areas",
+        "4. VAGUE_REFERENCE - Uses pronouns/references without antecedent",
+        "5. TIME_AMBIGUOUS - Unclear time reference",
+        "6. NONE - Query is clear enough to answer",
+        "",
+        "Respond in this exact format:",
+        "AMBIGUITY_TYPE: <type>",
+        "NEEDS_CLARIFICATION: <true/false>",
+        "CLARIFYING_QUESTION: <question to ask, or \"none\">",
+        "DETECTED_TOPICS: <comma-separated topics>",
+        "CONFIDENCE: <0.0-1.0>"
+    ]
 }

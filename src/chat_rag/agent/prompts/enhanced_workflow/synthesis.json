@@ -1,4 +1,13 @@
 {
     "version": "1.0.0",
-    "prompt": "Answer this HR question based on the context.\n\nContext:\n{context}\n\nQuestion: {query}\n\nBe concise. Cite policies when relevant."
+    "prompt": [
+        "Answer this HR question based on the context.",
+        "",
+        "Context:",
+        "{context}",
+        "",
+        "Question: {query}",
+        "",
+        "Be concise. Cite policies when relevant."
+    ]
 }

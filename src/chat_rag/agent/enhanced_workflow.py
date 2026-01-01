@@ -205,8 +205,12 @@ class EnhancedHRWorkflowAgent:
             try:
                 with open(path, "r") as f:
                     data = json.load(f)
-                    prompts[name] = data["prompt"]
-                    logger.info(f"Loaded enhanced workflow prompt '{name}' (version {data.get('version', 'unknown')})")
+                    prompt_data = data["prompt"]
+                if isinstance(prompt_data, list):
+                    prompts[name] = "\n".join(prompt_data)
+                else:
+                    prompts[name] = prompt_data
+                logger.info(f"Loaded enhanced workflow prompt '{name}' (version {data.get('version', 'unknown')})")
             except Exception as e:
                 logger.error(f"Failed to load prompt '{name}' from {path}: {e}")
                 prompts[name] = ""
