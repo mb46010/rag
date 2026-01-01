@@ -38,6 +38,7 @@ async def verify_early_fetch():
         # We need to see if it asks for clarification or proceeds to gather data
         # We can use astream to see the nodes
         async for event in agent.astream(query):
+            logger.info(f"DEBUG: Received event: {event}")
             if event["type"] == "progress":
                 logger.info(f"Node: {event['step']} - {event['message']}")
                 if event["step"] == "check_ambiguity":

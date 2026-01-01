@@ -94,8 +94,10 @@ class HRWorkflowAgent:
         # Initialize retriever
         if retriever:
             self.retriever = retriever
+            self.owns_retriever = False
         else:
             self.retriever = EnhancedHybridRetriever(RetrievalConfig(enable_reranking=True))
+            self.owns_retriever = True
 
         # Wrap with HyDE if enabled in the retriever's config
         if getattr(self.retriever, "config", None) and getattr(self.retriever.config, "enable_hyde", False):
@@ -576,8 +578,9 @@ class HRWorkflowAgent:
 
     async def close(self):
         """Clean up resources."""
-        if self.retriever:
+        if self.owns_retriever and hasattr(self.retriever, "close"):
             self.retriever.close()
+            logger.info("Closed agent-owned retriever")
         logger.info("Agent closed")
 
 

@@ -148,16 +148,22 @@ class EnhancedHRWorkflowAgent:
             temperature=self.config.temperature,
         )
 
-        # Initialize retriever (with optional HyDE wrapper)
-        base_retriever = retriever or EnhancedHybridRetriever(RetrievalConfig(enable_reranking=True))
+        # Initialize retriever
+        if retriever:
+            self.retriever = retriever
+            self.owns_retriever = False
+        else:
+            self.retriever = EnhancedHybridRetriever(RetrievalConfig(enable_reranking=True))
+            self.owns_retriever = True
 
         if enable_hyde:
             self.retriever = HyDERetriever(
-                base_retriever=base_retriever,
+                base_retriever=self.retriever,
                 llm=ChatOpenAI(model="gpt-4o-mini", temperature=0.7),
             )
         else:
-            self.retriever = base_retriever
+            # Already initialized in self.retriever above
+            pass
 
         # Initialize feature modules
         if enable_clarification:
@@ -239,9 +245,11 @@ class EnhancedHRWorkflowAgent:
                     for item in result:
                         if hasattr(item, "text"):
                             try:
-                                import json
-
-                                return json.loads(item.text)
+                                data = json.loads(item.text)
+                                # If it's a dict with a single key that matches the tool's data type,
+                                # we might want to flatten it, but for now let's just return the dict.
+                                # The node implementation will handle specific flattening.
+                                return data
                             except (json.JSONDecodeError, TypeError):
                                 continue
                         elif isinstance(item, dict):
@@ -257,8 +265,18 @@ class EnhancedHRWorkflowAgent:
     async def _fetch_profile(self, state: EnhancedAgentState) -> Dict:
         """Fetch employee profile via MCP early in the flow."""
         try:
-            profile = await self._call_mcp_tool("get_employee_profile_tool", {"email": self.user_email})
-            logger.info(f"Early profile fetch success for {self.user_email}")
+            raw_profile = await self._call_mcp_tool("get_employee_profile_tool", {"email": self.user_email})
+
+            # Robust extraction: MCP might return {"employee_profile": {"text": {...}}}
+            profile = raw_profile
+            if isinstance(raw_profile, dict) and "employee_profile" in raw_profile:
+                inner = raw_profile["employee_profile"]
+                if isinstance(inner, dict) and "text" in inner:
+                    profile = inner["text"]
+                else:
+                    profile = inner
+
+            logger.info(f"Early profile fetch success for {self.user_email}: {json.dumps(profile)}")
             return {"employee_profile": profile}
         except Exception as e:
             logger.error(f"Early profile fetch failed: {e}")
@@ -326,11 +344,13 @@ class EnhancedHRWorkflowAgent:
 
         query = state.get("resolved_query", state["messages"][-1].content)
 
-        # Get user's country from profile if available
-        user_country = None
+        # Get user context (profile info)
+        user_context = None
         if state.get("employee_profile"):
-            user_country = state["employee_profile"].get("country")
-            logger.info(f"Using country from profile: {user_country}")
+            # Pass full profile info to help ambiguity detection skip known fields
+            profile = state["employee_profile"]
+            user_context = json.dumps(profile)
+            logger.info(f"Using profile context for ambiguity detection: {user_context}")
 
         # Get conversation context
         context = None
@@ -339,7 +359,7 @@ class EnhancedHRWorkflowAgent:
 
         result = await self.clarification_detector.analyze(
             query=query,
-            user_country=user_country,
+            user_country=user_context,  # Passed as 'country' in prompt, but contains full info now
             conversation_context=context,
             system_prompt_override=self.prompts.get("ambiguity_detection"),
         )
@@ -610,16 +630,35 @@ class EnhancedHRWorkflowAgent:
         # Initialize Langfuse handler
         langfuse_handler = CallbackHandler()
 
-        # Track cost if enabled
-        if self.enable_cost_tracking:
-            with self.cost_tracker.track_query(query_id, self.user_email, message) as metrics:
+        node_output = {}
+
+        # Determine if we should track cost
+        metrics_context = (
+            self.cost_tracker.track_query(query_id, self.user_email, message) if self.enable_cost_tracking else None
+        )
+
+        try:
+            # We use a dummy context if tracking is disabled
+            class DummyMetrics:
+                hyde_used = False
+                chunks_retrieved = 0
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    pass
+
+            context = metrics_context or DummyMetrics()
+
+            with context as metrics:
                 async for event in self.graph.astream(
                     initial_state, stream_mode="updates", config={"callbacks": [langfuse_handler]}
                 ):
                     node_name = list(event.keys())[0]
-                    node_output = event[node_name]
+                    node_output = event[node_name] or {}
 
-                    if node_name == "gather_data":
+                    if node_name == "gather_data" and not isinstance(metrics, DummyMetrics):
                         metrics.hyde_used = node_output.get("hyde_used", False)
                         metrics.chunks_retrieved = len(node_output.get("policy_results") or [])
 
@@ -629,19 +668,9 @@ class EnhancedHRWorkflowAgent:
                         "message": step_names.get(node_name, f"Processing: {node_name}"),
                         "data": node_output,
                     }
-        else:
-            async for event in self.graph.astream(
-                initial_state, stream_mode="updates", config={"callbacks": [langfuse_handler]}
-            ):
-                node_name = list(event.keys())[0]
-                node_output = event[node_name]
-
-                yield {
-                    "type": "progress",
-                    "step": node_name,
-                    "message": step_names.get(node_name, f"Processing: {node_name}"),
-                    "data": node_output,
-                }
+        except Exception as e:
+            logger.error(f"astream error: {e}", exc_info=True)
+            node_output = {"error": str(e), "final_response": f"Error: {str(e)}"}
 
         # Final response
         final_response = node_output.get("final_response", "Unable to generate response.")
@@ -658,8 +687,9 @@ class EnhancedHRWorkflowAgent:
 
     async def close(self):
         """Clean up resources."""
-        if hasattr(self.retriever, "close"):
+        if self.owns_retriever and hasattr(self.retriever, "close"):
             self.retriever.close()
+            logger.info("Closed agent-owned retriever")
 
         if self.enable_cost_tracking:
             logger.info(f"Session cost summary: {self.get_cost_summary()}")

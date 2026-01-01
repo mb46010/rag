@@ -72,6 +72,12 @@ class EnhancedHybridRetriever:
             os.makedirs(self.config.retrieval_output_dir, exist_ok=True)
             logger.info(f"Debug logging enabled. Output dir: {self.config.retrieval_output_dir}")
 
+    def ensure_connected(self):
+        """Ensure the Weaviate client is connected."""
+        if not self.client.is_connected():
+            logger.info("Weaviate client not connected, reconnecting...")
+            self.client.connect()
+
     def _init_query_patterns(self):
         """Initialize keyword patterns for query classification."""
         self.factual_keywords = {
@@ -202,17 +208,8 @@ class EnhancedHybridRetriever:
         filters: Optional[Dict[str, Any]] = None,
         override_alpha: Optional[float] = None,
     ) -> List[PolicyChunk]:
-        """Retrieve relevant policy chunks.
-
-        Args:
-            query: Search query
-            top_k: Number of results to return
-            filters: Metadata filters (e.g., {"country": "CH"})
-            override_alpha: Override adaptive alpha selection
-
-        Returns:
-            List of PolicyChunk objects with confidence scores
-        """
+        """Retrieve relevant policy chunks."""
+        self.ensure_connected()
         top_k = top_k or self.config.default_top_k
         request_id = str(uuid.uuid4())[:8]
 
@@ -324,11 +321,8 @@ class EnhancedHybridRetriever:
         top_k: int = None,
         filters: Optional[Dict[str, Any]] = None,
     ) -> RetrievalResult:
-        """Retrieve with full metadata for observability.
-
-        Returns:
-            RetrievalResult with chunks and retrieval metadata
-        """
+        """Retrieve with full metadata for observability."""
+        self.ensure_connected()
         top_k = top_k or self.config.default_top_k
         filters = filters.copy() if filters else {}
         filters.setdefault("active", True)
