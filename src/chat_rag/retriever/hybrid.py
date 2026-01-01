@@ -24,6 +24,7 @@ import uuid
 
 from .models import PolicyChunk, QueryType, RetrievalResult
 from .config import RetrievalConfig
+from .tools import serve_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +219,24 @@ class EnhancedHybridRetriever:
 
         logger.info(f"Retrieved {len(chunks)} candidates via hybrid search")
 
+        # 1. Populate initial metadata immediately (query_type, alpha)
+        # This fixes missing data in "1_retrieval" debug step
+        for chunk in chunks:
+            chunk.query_type = query_type.value
+            # We don't have per-chunk alpha if using RRF, but if hybrid, we do.
+            # If RRF, alpha is not used in the same way, but we can leave null or set global.
+            if not self.config.enable_rrf:
+                chunk.alpha_used = alpha
+
+            # Initialize confidence/ranking fields to pending/unknown instead of null if preferred,
+            # but cleaning up the nulls in JSON was the user request.
+            # We'll leave them as is (None) but now we know why they are None at this stage.
+
+        # 2. Serve chunks (Text) immediately to provide context even for candidates
+        # This addresses "monitoring with more data" request.
+        if self.config.enable_context_window:
+            serve_chunks(self.client, chunks)
+
         self._dump_debug_json(
             request_id,
             "1_retrieval",
@@ -254,15 +273,6 @@ class EnhancedHybridRetriever:
         for c in chunks:
             conf_counts[c.confidence_level] = conf_counts.get(c.confidence_level, 0) + 1
         logger.info(f"Confidence levels: {conf_counts}")
-
-        # Fetch context windows if enabled
-        if self.config.enable_context_window:
-            self._batch_fetch_context(chunks)
-
-        # Add metadata for observability
-        for chunk in chunks:
-            chunk.query_type = query_type.value
-            chunk.alpha_used = alpha
 
         # Filter low confidence (but keep at least one result)
         confident_chunks = [c for c in chunks if c.confidence_level != "low"]
@@ -316,7 +326,13 @@ class EnhancedHybridRetriever:
         self._assign_confidence_levels(chunks)
 
         if self.config.enable_context_window:
-            self._batch_fetch_context(chunks)
+            serve_chunks(self.client, chunks)
+
+        # Metadata already assigned above in retrieve? No, retrieve_with_metadata calls _retrieve_hybrid directly.
+        # We need to assign it here too.
+        for chunk in chunks:
+            chunk.query_type = query_type.value
+            chunk.alpha_used = alpha
 
         return RetrievalResult(
             chunks=chunks,
@@ -440,58 +456,6 @@ class EnhancedHybridRetriever:
                 chunk.confidence_level = "medium"
             else:
                 chunk.confidence_level = "low"
-
-    def _batch_fetch_context(self, chunks: List[PolicyChunk]):
-        """Fetch adjacent chunks in a single batch query.
-
-        This avoids the N+1 query problem where each chunk triggers
-        separate queries for previous/next context.
-        """
-        if not chunks:
-            return
-
-        # Build list of adjacent indices to fetch
-        adjacent_requests = []
-        for chunk in chunks:
-            if chunk.chunk_index > 0:
-                adjacent_requests.append((chunk.document_id, chunk.chunk_index - 1))
-            adjacent_requests.append((chunk.document_id, chunk.chunk_index + 1))
-
-        if not adjacent_requests:
-            return
-
-        # Build OR filter for all adjacent chunks
-        collection = self.client.collections.get(self.config.collection_name)
-
-        filter_expr = None
-        for doc_id, idx in adjacent_requests:
-            f = Filter.by_property("document_id").equal(doc_id) & Filter.by_property("chunk_index").equal(idx)
-            filter_expr = f if filter_expr is None else (filter_expr | f)
-
-        try:
-            response = collection.query.fetch_objects(filters=filter_expr, limit=len(adjacent_requests))
-
-            # Build lookup map
-            context_map = {}
-            for obj in response.objects:
-                key = (obj.properties["document_id"], obj.properties["chunk_index"])
-                context_map[key] = {"text": obj.properties["text"], "chunk_id": obj.properties.get("chunk_id")}
-
-            # Assign to chunks
-            for chunk in chunks:
-                prev_data = context_map.get((chunk.document_id, chunk.chunk_index - 1))
-                next_data = context_map.get((chunk.document_id, chunk.chunk_index + 1))
-
-                if prev_data:
-                    chunk.previous_chunk = prev_data["text"]
-                    chunk.previous_chunk_id = prev_data["chunk_id"]
-
-                if next_data:
-                    chunk.next_chunk = next_data["text"]
-                    chunk.next_chunk_id = next_data["chunk_id"]
-
-        except Exception as e:
-            logger.warning(f"Batch context fetch failed: {e}")
 
     def _build_filters(self, filters: Dict[str, Any]) -> Optional[Filter]:
         """Build Weaviate filter from dictionary."""
