@@ -23,6 +23,12 @@ class AgentConfig:
     # Feature flags
     enable_streaming: bool = True
     enable_parallel_fetch: bool = True
+    use_enhanced_workflow: bool = False
+    enable_hyde: bool = True
+    enable_clarification: bool = True
+    enable_highlighting: bool = True
+    enable_memory: bool = True
+    enable_cost_tracking: bool = True
 
     # Observability
     enable_langfuse: bool = True

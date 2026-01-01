@@ -17,6 +17,8 @@ Benefits over ReAct:
 import logging
 import asyncio
 from typing import TypedDict, Annotated, Optional, List, Dict, Any
+import os
+import json
 from enum import Enum
 
 from langgraph.graph import StateGraph, START, END
@@ -29,7 +31,7 @@ from langfuse.langchain import CallbackHandler
 from langfuse import observe
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from chat_rag.retriever import EnhancedHybridRetriever, RetrievalConfig
+from chat_rag.retriever import EnhancedHybridRetriever, RetrievalConfig, HyDERetriever
 from .config import AgentConfig
 
 logger = logging.getLogger(__name__)
@@ -72,42 +74,6 @@ class HRWorkflowAgent:
     3. Synthesize response with citations
     """
 
-    CLASSIFICATION_PROMPT = """Classify this HR-related query into one category:
-
-Query: "{query}"
-
-Categories:
-- "policy_only": General policy questions that don't need personal employee data
-  Examples: "What's the WFH policy?", "How do expense reports work?", "What are the office hours?"
-
-- "personal_only": Questions about the user's specific data that don't need policy lookup
-  Examples: "How many PTO days do I have?", "What's my job title?", "What team am I on?"
-
-- "hybrid": Questions that need BOTH personal data AND policy information
-  Examples: "Am I eligible for parental leave?", "Based on my tenure, how much PTO do I get?"
-
-- "chitchat": Greetings or casual conversation
-  Examples: "Hello", "Thanks!", "How are you?"
-
-- "out_of_scope": Not HR-related at all
-  Examples: "What's the weather?", "Help me write code"
-
-Respond with ONLY the category name, nothing else."""
-
-    SYNTHESIS_PROMPT = """You are an HR assistant. Answer the user's question based on the provided context.
-
-{context}
-
-User Question: {query}
-
-Instructions:
-- Be concise and accurate
-- Cite policies as: "According to [Policy Name]..."
-- For personal data, be specific to the user
-- If information is missing, clearly state what's unavailable
-- Never make up policy details or employee information
-- If confidence is low, mention that the user should verify with HR"""
-
     def __init__(
         self,
         user_email: str,
@@ -131,12 +97,21 @@ Instructions:
         else:
             self.retriever = EnhancedHybridRetriever(RetrievalConfig(enable_reranking=True))
 
+        # Wrap with HyDE if enabled in the retriever's config
+        if getattr(self.retriever, "config", None) and getattr(self.retriever.config, "enable_hyde", False):
+            if not isinstance(self.retriever, HyDERetriever):
+                logger.info("HyDE enabled in retriever config - wrapping with HyDERetriever")
+                self.retriever = HyDERetriever(self.retriever)
+
         # Initialize LLM
         self.llm = ChatOpenAI(
             model=self.config.model_name,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
         )
+
+        # Load prompts
+        self.prompts = self._load_prompts()
 
         # MCP client (initialized lazily)
         self._mcp_client = None
@@ -146,6 +121,26 @@ Instructions:
         self.graph = self._build_graph()
 
         logger.info(f"HRWorkflowAgent initialized for {user_email}")
+
+    def _load_prompts(self) -> Dict[str, str]:
+        """Load prompts from the workflow prompts directory."""
+        prompts = {}
+        base_path = os.path.dirname(__file__)
+        prompts_dir = os.path.join(base_path, "prompts", "workflow")
+
+        for name in ["classification", "synthesis"]:
+            path = os.path.join(prompts_dir, f"{name}.json")
+            try:
+                with open(path, "r") as f:
+                    data = json.load(f)
+                    prompts[name] = data["prompt"]
+                    logger.info(f"Loaded workflow prompt '{name}' (version {data.get('version', 'unknown')})")
+            except Exception as e:
+                logger.error(f"Failed to load prompt '{name}' from {path}: {e}")
+                # Fallback to empty string or raise?
+                prompts[name] = ""
+
+        return prompts
 
     async def _get_mcp_client(self) -> MultiServerMCPClient:
         """Lazily initialize MCP client."""
@@ -215,7 +210,8 @@ Instructions:
         """Classify query intent for routing."""
         query = state["messages"][-1].content
 
-        prompt = self.CLASSIFICATION_PROMPT.format(query=query)
+        prompt_template = self.prompts.get("classification", "")
+        prompt = prompt_template.format(query=query)
         response = await self.llm.ainvoke([HumanMessage(content=prompt)])
 
         intent_str = response.content.strip().lower().replace('"', "")
@@ -327,7 +323,9 @@ Instructions:
                 filters["country"] = country
 
         try:
-            chunks = self.retriever.retrieve(query, filters=filters, top_k=3)
+            # Use aretrieve to support HyDE (which requires async for LLM calls)
+            # EnhancedHybridRetriever also has an aretrieve wrapper for compatibility.
+            chunks = await self.retriever.aretrieve(query, filters=filters, top_k=3)
 
             policy_results = [
                 {
@@ -427,7 +425,8 @@ Instructions:
         context = "\n\n---\n\n".join(context_parts) if context_parts else "No context available."
 
         # Generate response
-        prompt = self.SYNTHESIS_PROMPT.format(context=context, query=query)
+        prompt_template = self.prompts.get("synthesis", "")
+        prompt = prompt_template.format(context=context, query=query)
 
         response = await self.llm.ainvoke(
             [

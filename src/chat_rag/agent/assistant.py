@@ -18,7 +18,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langfuse.langchain import CallbackHandler
 from langfuse import observe
 
-from chat_rag.retriever import HybridRetriever
+from chat_rag.retriever import HybridRetriever, HyDERetriever, RetrievalConfig
 from .prompt import SYSTEM_PROMPT
 
 # Configure logging
@@ -48,7 +48,15 @@ class HRAssistantAgent:
         logger.info(f"Initializing HRAssistantAgent for user: {user_email}")
 
         # Initialize retriever
-        self.retriever = HybridRetriever()
+        config = RetrievalConfig()
+        base_retriever = HybridRetriever(config=config)
+
+        if config.enable_hyde:
+            logger.info("HyDE enabled in config - initializing HyDERetriever wrapper")
+            self.retriever = HyDERetriever(base_retriever)
+        else:
+            logger.info("HyDE disabled - using base HybridRetriever")
+            self.retriever = base_retriever
 
         # MCP client and agent will be initialized in async context
         self.mcp_client = None
@@ -73,17 +81,27 @@ class HRAssistantAgent:
 
             # Add retriever tool using @tool decorator
             @tool
-            def search_policies(query: str, country: Optional[str] = None) -> str:
+            async def search_policies(query: str, country: Optional[str] = None) -> str:
                 """Search HR policies and retrieve relevant information. Use country filter when you know the employee's country."""
+                logger.info(f"Tool 'search_policies' called with query: '{query}', country: '{country}'")
+
                 filters = {}
                 if country:
                     filters["country"] = country
+                    logger.info(f"Applying country filter: {country}")
 
-                results = self.retriever.retrieve(query, filters=filters)
+                logger.info("Executing async retrieval...")
+                try:
+                    results = await self.retriever.aretrieve(query, filters=filters)
+                    logger.info(f"Retrieval complete. Found {len(results)} results.")
+                except Exception as e:
+                    logger.error(f"Retrieval failed: {e}", exc_info=True)
+                    return f"Error searching policies: {str(e)}"
 
-                return "\n\n".join(
+                formatted_results = "\n\n".join(
                     [f"Source: {r.document_name} (Section: {r.section_path_str})\n{r.text}" for r in results]
                 )
+                return formatted_results
 
             self.tools = mcp_tools + [search_policies]
             logger.info(f"Total tools: {len(self.tools)}")

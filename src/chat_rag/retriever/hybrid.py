@@ -172,6 +172,28 @@ class EnhancedHybridRetriever:
         except Exception as e:
             logger.warning(f"Failed to dump debug JSON: {e}")
 
+    async def aretrieve(
+        self,
+        query: str,
+        top_k: int = None,
+        filters: Optional[Dict[str, Any]] = None,
+        override_alpha: Optional[float] = None,
+    ) -> List[PolicyChunk]:
+        """Async wrapper for retrieve() to provide consistent interface with HyDERetriever.
+
+        Args:
+            query: Search query
+            top_k: Number of results to return
+            filters: Metadata filters
+            override_alpha: Override adaptive alpha selection
+
+        Returns:
+            List of PolicyChunk objects
+        """
+        # Since the underlying Weaviate client is sync, we just call the sync method.
+        # This keeps the interface compatible with HyDERetriever.aretrieve
+        return self.retrieve(query, top_k=top_k, filters=filters, override_alpha=override_alpha)
+
     @observe(as_type="generation")
     def retrieve(
         self,

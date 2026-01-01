@@ -34,7 +34,7 @@ class RetrievalConfig:
     enable_reranking: bool = True
     enable_context_window: bool = True
     enable_rrf: bool = False  # Use RRF instead of Weaviate's fusion
-    enable_hyde: bool = False  # Hypothetical Document Embeddings
+    enable_hyde: bool = True  # Hypothetical Document Embeddings
 
     # RRF parameter
     rrf_k: int = 60  # Standard RRF constant

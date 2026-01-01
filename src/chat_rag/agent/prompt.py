@@ -52,6 +52,7 @@ Categories:
 - "policy_only": General policy questions that don't need personal employee data
   Be careful: policies are country-specific, choose "policy_only" only if the user specifies for which country the policy is asked.
   Otherwise, choose "hybrid" to retrieve specificpolicies for the user's country.  
+  Protip: If the user asks "Can I ...", it's most likely a "hybrid" category.
   Examples: "What's the WFH policy in Italy?", "How do expense reports work in Switzerland?"
 
 - "personal_only": Questions about the user's specific data

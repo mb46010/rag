@@ -1,0 +1,4 @@
+{
+    "version": "1.0.0",
+    "prompt": "Classify this HR-related query into one category:\n\nQuery: \"{query}\"\n\nCategories:\n- \"policy_only\": General policy questions that don't need personal employee data\n  Examples: \"What's the WFH policy?\", \"How do expense reports work?\", \"What are the office hours?\"\n\n- \"personal_only\": Questions about the user's specific data that don't need policy lookup\n  Examples: \"How many PTO days do I have?\", \"What's my job title?\", \"What team am I on?\"\n\n- \"hybrid\": Questions that need BOTH personal data AND policy information\n  Examples: \"Am I eligible for parental leave?\", \"Based on my tenure, how much PTO do I get?\"\n\n- \"chitchat\": Greetings or casual conversation\n  Examples: \"Hello\", \"Thanks!\", \"How are you?\"\n\n- \"out_of_scope\": Not HR-related at all\n  Examples: \"What's the weather?\", \"Help me write code\"\n\nRespond with ONLY the category name, nothing else."
+}

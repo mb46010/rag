@@ -11,7 +11,7 @@ import chainlit as cl
 from chainlit.input_widget import TextInput
 from dotenv import load_dotenv
 
-from chat_rag.agent import HRWorkflowAgent, AgentConfig
+from chat_rag.agent import get_agent, AgentConfig, HRWorkflowAgent, EnhancedHRWorkflowAgent
 from chat_rag.retriever import EnhancedHybridRetriever, RetrievalConfig
 
 # Load environment variables
@@ -38,7 +38,12 @@ async def on_chat_start():
                 label="Employee Email",
                 initial="john.doe@company.com",
                 placeholder="Enter your email address",
-            )
+            ),
+            cl.input_widget.Switch(
+                id="use_enhanced_workflow",
+                label="Use Enhanced Workflow",
+                initial=False,
+            ),
         ]
     ).send()
 
@@ -68,8 +73,9 @@ async def on_chat_start():
             temperature=0.1,
             enable_streaming=True,
             enable_parallel_fetch=True,
+            use_enhanced_workflow=settings.get("use_enhanced_workflow", False),
         )
-        agent = HRWorkflowAgent(
+        agent = get_agent(
             user_email=user_email,
             retriever=retriever,
             config=agent_config,
@@ -128,9 +134,10 @@ async def on_settings_update(settings):
             retriever = EnhancedHybridRetriever(RetrievalConfig(enable_reranking=True))
             cl.user_session.set("retriever", retriever)
 
-        agent = HRWorkflowAgent(
+        agent = get_agent(
             user_email=user_email,
             retriever=retriever,
+            config=AgentConfig(use_enhanced_workflow=settings.get("use_enhanced_workflow", False)),
         )
         cl.user_session.set("agent", agent)
 
@@ -145,7 +152,7 @@ async def on_settings_update(settings):
 async def on_message(message: cl.Message):
     """Handle incoming chat message with streaming progress."""
     user_email = cl.user_session.get("user_email")
-    agent: Optional[HRWorkflowAgent] = cl.user_session.get("agent")
+    agent: Optional[HRWorkflowAgent | EnhancedHRWorkflowAgent] = cl.user_session.get("agent")
 
     if not agent:
         await cl.Message(content="Agent not initialized. Please refresh the page.").send()
@@ -191,7 +198,7 @@ async def on_chat_end():
     logger.info("Chat session ending")
 
     # Close agent
-    agent: Optional[HRWorkflowAgent] = cl.user_session.get("agent")
+    agent: Optional[HRWorkflowAgent | EnhancedHRWorkflowAgent] = cl.user_session.get("agent")
     if agent:
         await agent.close()
         logger.info("Agent closed")

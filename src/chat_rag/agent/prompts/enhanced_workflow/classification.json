@@ -1,0 +1,4 @@
+{
+    "version": "1.0.0",
+    "prompt": "Classify this HR query:\n\nQuery: \"{query}\"\n\nCategories:\n- \"policy_only\": General policy questions\n- \"personal_only\": User's specific data\n- \"hybrid\": Needs both personal data AND policies\n\nRespond with ONLY the category name."
+}

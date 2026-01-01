@@ -1,22 +1,26 @@
-"""
-Enhanced LangGraph Workflow Agent with:
+"""Enhanced LangGraph Workflow Agent with production features.
+
+Features:
 - HyDE for improved retrieval
 - Clarifying questions for ambiguous queries
 - Source highlighting for citations
 - Multi-turn session memory
 - Cost tracking
-
-This extends the base workflow agent with production features.
 """
 
 import logging
+import os
 import uuid
+import asyncio
+import json
 from typing import TypedDict, Annotated, Optional, List, Dict, Any
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from chat_rag.retriever import EnhancedHybridRetriever, RetrievalConfig
 from chat_rag.retriever.hyde import HyDERetriever
@@ -127,6 +131,7 @@ class EnhancedHRWorkflowAgent:
         enable_memory: bool = True,
         enable_cost_tracking: bool = True,
     ):
+        """Initialize the enhanced HR workflow agent."""
         self.user_email = user_email
         self.config = config or AgentConfig()
 
@@ -171,6 +176,9 @@ class EnhancedHRWorkflowAgent:
         self._mcp_client = None
         self._mcp_tools = None
 
+        # Load prompts
+        self.prompts = self._load_prompts()
+
         # Build graph
         self.graph = self._build_graph()
 
@@ -180,12 +188,89 @@ class EnhancedHRWorkflowAgent:
             f"Highlighting={enable_highlighting}, Memory={enable_memory}"
         )
 
+    def _load_prompts(self) -> Dict[str, str]:
+        """Load prompts from the enhanced_workflow prompts directory."""
+        prompts = {}
+        base_path = os.path.dirname(__file__)
+        prompts_dir = os.path.join(base_path, "prompts", "enhanced_workflow")
+
+        for name in ["classification", "synthesis", "ambiguity_detection"]:
+            path = os.path.join(prompts_dir, f"{name}.json")
+            try:
+                with open(path, "r") as f:
+                    data = json.load(f)
+                    prompts[name] = data["prompt"]
+                    logger.info(f"Loaded enhanced workflow prompt '{name}' (version {data.get('version', 'unknown')})")
+            except Exception as e:
+                logger.error(f"Failed to load prompt '{name}' from {path}: {e}")
+                prompts[name] = ""
+
+        return prompts
+
+    async def _get_mcp_client(self) -> MultiServerMCPClient:
+        """Lazily initialize MCP client."""
+        if self._mcp_client is None:
+            self._mcp_client = MultiServerMCPClient(
+                {
+                    "hr_services": {
+                        "url": f"{self.config.mcp_url}/sse",
+                        "transport": "sse",
+                    }
+                }
+            )
+            self._mcp_tools = await self._mcp_client.get_tools()
+            logger.info(f"Initialized MCP client with {len(self._mcp_tools)} tools")
+        return self._mcp_client
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+    )
+    async def _call_mcp_tool(self, tool_name: str, args: Dict) -> Dict:
+        """Call MCP tool with retry logic."""
+        await self._get_mcp_client()
+
+        for tool in self._mcp_tools:
+            if tool.name == tool_name:
+                result = await tool.ainvoke(args)
+
+                # Handle MCP list response (e.g. [TextContent(text='{...}')])
+                if isinstance(result, list):
+                    for item in result:
+                        if hasattr(item, "text"):
+                            try:
+                                import json
+
+                                return json.loads(item.text)
+                            except (json.JSONDecodeError, TypeError):
+                                continue
+                        elif isinstance(item, dict):
+                            return item
+
+                    logger.warning(f"MCP tool {tool_name} returned a list but no valid JSON/dict found: {result}")
+                    return {"error": "Invalid tool response format"}
+
+                return result
+
+        raise ValueError(f"Tool {tool_name} not found")
+
+    async def _fetch_profile(self, state: EnhancedAgentState) -> Dict:
+        """Fetch employee profile via MCP early in the flow."""
+        try:
+            profile = await self._call_mcp_tool("get_employee_profile_tool", {"email": self.user_email})
+            logger.info(f"Early profile fetch success for {self.user_email}")
+            return {"employee_profile": profile}
+        except Exception as e:
+            logger.error(f"Early profile fetch failed: {e}")
+            return {"employee_profile": {"error": str(e)}}
+
     def _build_graph(self) -> StateGraph:
         """Build enhanced workflow graph."""
         graph = StateGraph(EnhancedAgentState)
 
         # Nodes
         graph.add_node("resolve_context", self._resolve_context)
+        graph.add_node("fetch_profile", self._fetch_profile)
         graph.add_node("check_ambiguity", self._check_ambiguity)
         graph.add_node("ask_clarification", self._ask_clarification)
         graph.add_node("classify_intent", self._classify_intent)
@@ -195,7 +280,8 @@ class EnhancedHRWorkflowAgent:
 
         # Edges
         graph.add_edge(START, "resolve_context")
-        graph.add_edge("resolve_context", "check_ambiguity")
+        graph.add_edge("resolve_context", "fetch_profile")
+        graph.add_edge("fetch_profile", "check_ambiguity")
 
         # Conditional: ambiguous → ask, else continue
         graph.add_conditional_edges(
@@ -225,10 +311,8 @@ class EnhancedHRWorkflowAgent:
 
         if self.enable_memory and self.memory.has_context:
             resolved_query = self.memory.resolve_query(original_query)
-            entities = self.memory.extract_entities_from_query(original_query)
         else:
             resolved_query = original_query
-            entities = {}
 
         return {
             "original_query": original_query,
@@ -246,6 +330,7 @@ class EnhancedHRWorkflowAgent:
         user_country = None
         if state.get("employee_profile"):
             user_country = state["employee_profile"].get("country")
+            logger.info(f"Using country from profile: {user_country}")
 
         # Get conversation context
         context = None
@@ -256,6 +341,11 @@ class EnhancedHRWorkflowAgent:
             query=query,
             user_country=user_country,
             conversation_context=context,
+            system_prompt_override=self.prompts.get("ambiguity_detection"),
+        )
+
+        logger.info(
+            f"Clarification result: needs_clarification={result.needs_clarification}, type={result.ambiguity_type.value}"
         )
 
         if result.needs_clarification:
@@ -280,16 +370,8 @@ class EnhancedHRWorkflowAgent:
         """Classify query intent."""
         query = state.get("resolved_query", state["messages"][-1].content)
 
-        prompt = f"""Classify this HR query:
-
-Query: "{query}"
-
-Categories:
-- "policy_only": General policy questions
-- "personal_only": User's specific data
-- "hybrid": Needs both personal data AND policies
-
-Respond with ONLY the category name."""
+        prompt_template = self.prompts.get("classification", "")
+        prompt = prompt_template.format(query=query)
 
         response = await self.llm.ainvoke([HumanMessage(content=prompt)])
         intent = response.content.strip().lower().replace('"', "")
@@ -310,16 +392,36 @@ Respond with ONLY the category name."""
 
         # Fetch personal data if needed
         if intent in ["personal_only", "hybrid"]:
-            # MCP tool calls would go here
-            # For now, placeholder
-            results["employee_profile"] = None
-            results["time_off_balance"] = None
+            # Profile might be already fetched by early fetch_profile node
+            profile = state.get("employee_profile")
+            if not profile or "error" in profile:
+                try:
+                    profile = await self._call_mcp_tool("get_employee_profile_tool", {"email": self.user_email})
+                    results["employee_profile"] = profile
+                    logger.info(f"Fetched profile for {self.user_email} (fallback in gather_data)")
+                except Exception as e:
+                    logger.error(f"Failed to fetch profile in gather_data: {e}")
+                    results["employee_profile"] = {"error": str(e)}
+            else:
+                # Already have it, but might need to ensure it's in results for synthesis node if it expects it there
+                # Actually synthesis node uses state.get("employee_profile"), so it's fine.
+                pass
+
+            # Fetch PTO balance
+            try:
+                balance = await self._call_mcp_tool("get_time_off_balance_tool", {"email": self.user_email})
+                results["time_off_balance"] = balance
+                logger.info(f"Fetched PTO balance for {self.user_email}")
+            except Exception as e:
+                logger.error(f"Failed to fetch PTO: {e}")
+                results["time_off_balance"] = {"error": str(e)}
 
         # Search policies if needed
         if intent in ["policy_only", "hybrid"]:
             filters = {"active": True}
-            if state.get("employee_profile"):
-                country = state["employee_profile"].get("country")
+            profile_for_filter = results.get("employee_profile") or state.get("employee_profile")
+            if profile_for_filter and isinstance(profile_for_filter, dict):
+                country = profile_for_filter.get("country")
                 if country:
                     filters["country"] = country
 
@@ -366,14 +468,8 @@ Respond with ONLY the category name."""
 
         context = "\n\n---\n\n".join(context_parts) or "No context available."
 
-        prompt = f"""Answer this HR question based on the context.
-
-Context:
-{context}
-
-Question: {query}
-
-Be concise. Cite policies when relevant."""
+        prompt_template = self.prompts.get("synthesis", "")
+        prompt = prompt_template.format(context=context, query=query)
 
         response = await self.llm.ainvoke(
             [
@@ -472,6 +568,87 @@ Be concise. Cite policies when relevant."""
             "clarification_requested": result.get("needs_clarification", False),
             "sources_count": len(result.get("policy_results") or []),
         }
+
+    @observe(as_type="agent")
+    async def astream(self, message: str):
+        """
+        Stream workflow execution with progress updates.
+
+        Yields:
+            Dict with type ('progress' or 'complete') and data
+        """
+        query_id = str(uuid.uuid4())[:8]
+
+        initial_state: EnhancedAgentState = {
+            "messages": [HumanMessage(content=message)],
+            "user_email": self.user_email,
+            "query_id": query_id,
+            "original_query": message,
+            "resolved_query": message,
+            "intent": None,
+            "needs_clarification": False,
+            "clarifying_question": None,
+            "employee_profile": None,
+            "time_off_balance": None,
+            "policy_results": None,
+            "highlighted_sources": None,
+            "hyde_used": False,
+            "final_response": None,
+            "error": None,
+        }
+
+        step_names = {
+            "resolve_context": "🧠 Resolving context...",
+            "check_ambiguity": "🔍 Checking for ambiguity...",
+            "ask_clarification": "💬 Asking for clarification...",
+            "classify_intent": "🏷️ Classifying intent...",
+            "gather_data": "📊 Gathering information...",
+            "synthesize": "✍️ Preparing response...",
+            "highlight_sources": "📽️ Highlighting sources...",
+        }
+
+        # Initialize Langfuse handler
+        langfuse_handler = CallbackHandler()
+
+        # Track cost if enabled
+        if self.enable_cost_tracking:
+            with self.cost_tracker.track_query(query_id, self.user_email, message) as metrics:
+                async for event in self.graph.astream(
+                    initial_state, stream_mode="updates", config={"callbacks": [langfuse_handler]}
+                ):
+                    node_name = list(event.keys())[0]
+                    node_output = event[node_name]
+
+                    if node_name == "gather_data":
+                        metrics.hyde_used = node_output.get("hyde_used", False)
+                        metrics.chunks_retrieved = len(node_output.get("policy_results") or [])
+
+                    yield {
+                        "type": "progress",
+                        "step": node_name,
+                        "message": step_names.get(node_name, f"Processing: {node_name}"),
+                        "data": node_output,
+                    }
+        else:
+            async for event in self.graph.astream(
+                initial_state, stream_mode="updates", config={"callbacks": [langfuse_handler]}
+            ):
+                node_name = list(event.keys())[0]
+                node_output = event[node_name]
+
+                yield {
+                    "type": "progress",
+                    "step": node_name,
+                    "message": step_names.get(node_name, f"Processing: {node_name}"),
+                    "data": node_output,
+                }
+
+        # Final response
+        final_response = node_output.get("final_response", "Unable to generate response.")
+        if node_output.get("highlighted_sources"):
+            final_response += node_output["highlighted_sources"]
+
+        yield {"type": "complete", "response": final_response}
 
     def get_cost_summary(self) -> Dict:
         """Get cost tracking summary."""
